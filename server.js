@@ -5,7 +5,10 @@ const { WebSocketServer } = require("ws");
 const app = express();
 const PORT = 3000;
 
+// Cria o servidor HTTP
 const server = http.createServer(app);
+
+// Cria o servidor WebSocket usando o mesmo servidor HTTP
 const wss = new WebSocketServer({ server });
 
 // Salas abertas no servidor
@@ -29,24 +32,72 @@ function gerarCodigoSala() {
     return codigo;
 }
 
-// Facilita o envio de mensagens JSON
+// Facilita o envio de mensagens JSON para um jogador
 function enviar(ws, dados) {
     ws.send(JSON.stringify(dados));
 }
 
+// Envia uma mensagem para todos os jogadores da sala
+function enviarParaSala(sala, dados) {
+    for (const jogador of sala.players) {
+        enviar(jogador.socket, dados);
+    }
+}
+
+// Verifica se existe uma combinação vencedora
+function verificarVencedor(board) {
+    const combinacoes = [
+        // Horizontais
+        [0, 1, 2],
+        [3, 4, 5],
+        [6, 7, 8],
+
+        // Verticais
+        [0, 3, 6],
+        [1, 4, 7],
+        [2, 5, 8],
+
+        // Diagonais
+        [0, 4, 8],
+        [2, 4, 6]
+    ];
+
+    for (const combinacao of combinacoes) {
+        const [a, b, c] = combinacao;
+
+        if (
+            board[a] !== "" &&
+            board[a] === board[b] &&
+            board[a] === board[c]
+        ) {
+            return board[a];
+        }
+    }
+
+    return null;
+}
+
+// Verifica se todas as posições foram preenchidas
+function verificarEmpate(board) {
+    return board.every((celula) => celula !== "");
+}
+
+// Quando um jogador se conecta ao servidor WebSocket
 wss.on("connection", (ws) => {
     console.log("Novo jogador conectado via WebSocket!");
 
-    // Informações que vamos associar à conexão
+    // Informações associadas à conexão do jogador
     ws.roomCode = null;
     ws.playerName = null;
     ws.playerSymbol = null;
 
+    // Confirma que a conexão WebSocket foi realizada
     enviar(ws, {
         type: "CONNECTED",
         message: "Conectado ao servidor WebSocket!"
     });
 
+    // Recebe mensagens do cliente
     ws.on("message", (data) => {
         try {
             const mensagem = JSON.parse(data.toString());
@@ -58,12 +109,17 @@ wss.on("connection", (ws) => {
                     entrarNaSala(ws, mensagem);
                     break;
 
+                case "MOVE":
+                    executarJogada(ws, mensagem);
+                    break;
+
                 default:
                     enviar(ws, {
                         type: "ERROR",
                         message: "Tipo de mensagem desconhecido."
                     });
             }
+
         } catch (erro) {
             console.log("Erro ao interpretar mensagem:", erro);
 
@@ -74,15 +130,18 @@ wss.on("connection", (ws) => {
         }
     });
 
+    // Detecta quando o jogador se desconecta
     ws.on("close", () => {
         console.log("Jogador desconectado.");
     });
 });
 
+// Cria ou entra em uma sala
 function entrarNaSala(ws, mensagem) {
     const playerName = mensagem.playerName;
     let roomCode = mensagem.roomCode;
 
+    // Nome é obrigatório
     if (!playerName) {
         enviar(ws, {
             type: "ERROR",
@@ -92,7 +151,7 @@ function entrarNaSala(ws, mensagem) {
         return;
     }
 
-    // Se não informou código, cria nova sala
+    // Se não informou código, cria uma nova sala
     if (!roomCode) {
         do {
             roomCode = gerarCodigoSala();
@@ -109,10 +168,12 @@ function entrarNaSala(ws, mensagem) {
         rooms.set(roomCode, novaSala);
     }
 
+    // Padroniza o código para letras maiúsculas
     roomCode = roomCode.toUpperCase();
 
     const sala = rooms.get(roomCode);
 
+    // Verifica se a sala existe
     if (!sala) {
         enviar(ws, {
             type: "ROOM_NOT_FOUND",
@@ -122,6 +183,7 @@ function entrarNaSala(ws, mensagem) {
         return;
     }
 
+    // Máximo de dois jogadores
     if (sala.players.length >= 2) {
         enviar(ws, {
             type: "ROOM_FULL",
@@ -131,6 +193,7 @@ function entrarNaSala(ws, mensagem) {
         return;
     }
 
+    // Primeiro jogador recebe X e segundo recebe O
     const simbolo = sala.players.length === 0 ? "X" : "O";
 
     const jogador = {
@@ -141,10 +204,12 @@ function entrarNaSala(ws, mensagem) {
 
     sala.players.push(jogador);
 
+    // Guarda informações do jogador na conexão
     ws.roomCode = roomCode;
     ws.playerName = playerName;
     ws.playerSymbol = simbolo;
 
+    // Confirma entrada na sala
     enviar(ws, {
         type: "ROOM_JOINED",
         roomCode: roomCode,
@@ -156,26 +221,160 @@ function entrarNaSala(ws, mensagem) {
         `${playerName} entrou na sala ${roomCode} como ${simbolo}`
     );
 
-    // Quando chegam 2 jogadores, começa a partida
+    // Quando chegam dois jogadores, inicia a partida
     if (sala.players.length === 2) {
         sala.status = "PLAYING";
 
-        for (const player of sala.players) {
-            enviar(player.socket, {
-                type: "GAME_STARTED",
-                roomCode: roomCode,
-                currentTurn: sala.currentTurn,
-                players: sala.players.map((p) => ({
-                    name: p.name,
-                    symbol: p.symbol
-                }))
-            });
-        }
+        enviarParaSala(sala, {
+            type: "GAME_STARTED",
+            roomCode: roomCode,
+            currentTurn: sala.currentTurn,
+            players: sala.players.map((player) => ({
+                name: player.name,
+                symbol: player.symbol
+            }))
+        });
 
         console.log(`Partida iniciada na sala ${roomCode}`);
     }
 }
 
+// Processa uma jogada
+function executarJogada(ws, mensagem) {
+    const roomCode = ws.roomCode;
+    const position = mensagem.position;
+
+    // Verifica se o jogador pertence a uma sala
+    if (!roomCode) {
+        enviar(ws, {
+            type: "INVALID_MOVE",
+            message: "Você não está em uma sala."
+        });
+
+        return;
+    }
+
+    const sala = rooms.get(roomCode);
+
+    // Verifica se a partida existe e está em andamento
+    if (!sala || sala.status !== "PLAYING") {
+        enviar(ws, {
+            type: "INVALID_MOVE",
+            message: "A partida não está disponível."
+        });
+
+        return;
+    }
+
+    const simboloJogador = ws.playerSymbol;
+
+    // Verifica se é a vez do jogador
+    if (sala.currentTurn !== simboloJogador) {
+        enviar(ws, {
+            type: "INVALID_MOVE",
+            message: "Não é a sua vez."
+        });
+
+        return;
+    }
+
+    // A posição precisa estar entre 0 e 8
+    if (!Number.isInteger(position) || position < 0 || position > 8) {
+        enviar(ws, {
+            type: "INVALID_MOVE",
+            message: "Posição inválida."
+        });
+
+        return;
+    }
+
+    // Verifica se a célula está livre
+    if (sala.board[position] !== "") {
+        enviar(ws, {
+            type: "INVALID_MOVE",
+            message: "Essa posição já está ocupada."
+        });
+
+        return;
+    }
+
+    // Registra a jogada
+    sala.board[position] = simboloJogador;
+
+    console.log(
+        `${ws.playerName} jogou na posição ${position}`
+    );
+
+    // Verifica se a última jogada gerou uma vitória
+    const vencedor = verificarVencedor(sala.board);
+
+    if (vencedor) {
+        sala.status = "FINISHED";
+        sala.currentTurn = null;
+
+        // Atualiza o tabuleiro final
+        enviarParaSala(sala, {
+            type: "BOARD_UPDATE",
+            board: sala.board,
+            nextTurn: null
+        });
+
+        // Informa o fim da partida
+        enviarParaSala(sala, {
+            type: "GAME_OVER",
+            result: "WIN",
+            winner: vencedor,
+            winnerName: ws.playerName
+        });
+
+        console.log(
+            `Fim de jogo! ${ws.playerName} venceu com ${vencedor}.`
+        );
+
+        return;
+    }
+
+    // Se ninguém venceu, verifica se houve empate
+    if (verificarEmpate(sala.board)) {
+        sala.status = "FINISHED";
+        sala.currentTurn = null;
+
+        // Atualiza o tabuleiro final
+        enviarParaSala(sala, {
+            type: "BOARD_UPDATE",
+            board: sala.board,
+            nextTurn: null
+        });
+
+        // Informa o empate
+        enviarParaSala(sala, {
+            type: "GAME_OVER",
+            result: "DRAW",
+            winner: null,
+            winnerName: null
+        });
+
+        console.log("Fim de jogo! Empate.");
+
+        return;
+    }
+
+    // Se a partida continua, alterna o turno
+    sala.currentTurn = simboloJogador === "X" ? "O" : "X";
+
+    // Atualiza o tabuleiro para os dois jogadores
+    enviarParaSala(sala, {
+        type: "BOARD_UPDATE",
+        board: sala.board,
+        nextTurn: sala.currentTurn
+    });
+
+    console.log(
+        `Próximo turno: ${sala.currentTurn}`
+    );
+}
+
+// Inicia o servidor
 server.listen(PORT, () => {
     console.log(`Servidor rodando em http://localhost:${PORT}`);
     console.log(`WebSocket rodando em ws://localhost:${PORT}`);
