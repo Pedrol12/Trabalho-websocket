@@ -1,0 +1,25 @@
+{
+  "name": "trabalho-websocket",
+  "version": "1.0.0",
+  "description": "Trabalho N2 sobre jogo da velha mulplayer",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Pedrol12/Trabalho-websocket.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Pedrol12/Trabalho-websocket/issues"
+  },
+  "homepage": "https://github.com/Pedrol12/Trabalho-websocket#readme",
+  "dependencies": {
+    "express": "^5.2.1",
+    "ws": "^8.22.0"
+  }
+}
