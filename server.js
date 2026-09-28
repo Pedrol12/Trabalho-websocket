@@ -5,6 +5,9 @@ const { WebSocketServer } = require("ws");
 const app = express();
 const PORT = 3000;
 
+// Tempo máximo para cada turno
+const TEMPO_TURNO_MS = 15000;
+
 // Cria o servidor HTTP
 const server = http.createServer(app);
 
@@ -51,6 +54,79 @@ function obterPlacar(sala) {
         symbol: player.symbol,
         score: player.score
     }));
+}
+
+// Cancela o cronômetro atual da sala
+function cancelarCronometroTurno(sala) {
+    if (sala.turnTimer) {
+        clearTimeout(sala.turnTimer);
+        sala.turnTimer = null;
+    }
+
+    sala.turnDeadline = null;
+}
+
+// Inicia o cronômetro de 15 segundos para o turno atual
+function iniciarCronometroTurno(sala) {
+    cancelarCronometroTurno(sala);
+
+    if (sala.status !== "PLAYING" || !sala.currentTurn) {
+        return;
+    }
+
+    const simboloDoTurno = sala.currentTurn;
+
+    sala.turnDeadline = Date.now() + TEMPO_TURNO_MS;
+
+    // Avisa os clientes que começou um novo cronômetro
+    enviarParaSala(sala, {
+        type: "TURN_TIMER",
+        currentTurn: simboloDoTurno,
+        seconds: TEMPO_TURNO_MS / 1000,
+        deadline: sala.turnDeadline
+    });
+
+    sala.turnTimer = setTimeout(() => {
+        // Garante que a partida ainda existe e que o turno não mudou
+        if (
+            sala.status !== "PLAYING" ||
+            sala.currentTurn !== simboloDoTurno
+        ) {
+            return;
+        }
+
+        const jogadorQuePerdeuOTurno = simboloDoTurno;
+
+        // Passa a vez automaticamente
+        sala.currentTurn =
+            jogadorQuePerdeuOTurno === "X" ? "O" : "X";
+
+        sala.turnTimer = null;
+        sala.turnDeadline = null;
+
+        enviarParaSala(sala, {
+            type: "TURN_TIMEOUT",
+            timedOutSymbol: jogadorQuePerdeuOTurno,
+            nextTurn: sala.currentTurn,
+            message: `Tempo do jogador ${jogadorQuePerdeuOTurno} esgotado.`
+        });
+
+        // O tabuleiro não muda, mas o turno precisa ser sincronizado
+        enviarParaSala(sala, {
+            type: "BOARD_UPDATE",
+            board: sala.board,
+            nextTurn: sala.currentTurn
+        });
+
+        console.log(
+            `Tempo do jogador ${jogadorQuePerdeuOTurno} esgotado. ` +
+            `Próximo turno: ${sala.currentTurn}`
+        );
+
+        // Começa o cronômetro do novo jogador
+        iniciarCronometroTurno(sala);
+
+    }, TEMPO_TURNO_MS);
 }
 
 // Verifica se existe uma combinação vencedora
@@ -177,7 +253,11 @@ function entrarNaSala(ws, mensagem) {
             status: "WAITING",
 
             // Jogadores que pediram revanche
-            rematchRequests: new Set()
+            rematchRequests: new Set(),
+
+            // Controle do cronômetro
+            turnTimer: null,
+            turnDeadline: null
         };
 
         rooms.set(roomCode, novaSala);
@@ -251,6 +331,9 @@ function entrarNaSala(ws, mensagem) {
         });
 
         console.log(`Partida iniciada na sala ${roomCode}`);
+
+        // X possui 15 segundos para realizar a primeira jogada
+        iniciarCronometroTurno(sala);
     }
 }
 
@@ -308,6 +391,9 @@ function executarJogada(ws, mensagem) {
         return;
     }
 
+    // A jogada foi validada. Cancela o cronômetro atual.
+    cancelarCronometroTurno(sala);
+
     // Registra a jogada
     sala.board[position] = simboloJogador;
 
@@ -322,11 +408,12 @@ function executarJogada(ws, mensagem) {
         sala.status = "FINISHED";
         sala.currentTurn = null;
 
+        cancelarCronometroTurno(sala);
+
         const jogadorVencedor = sala.players.find(
             (player) => player.symbol === vencedor
         );
 
-        // Soma um ponto para o vencedor
         if (jogadorVencedor) {
             jogadorVencedor.score++;
         }
@@ -369,6 +456,8 @@ function executarJogada(ws, mensagem) {
         sala.status = "FINISHED";
         sala.currentTurn = null;
 
+        cancelarCronometroTurno(sala);
+
         enviarParaSala(sala, {
             type: "BOARD_UPDATE",
             board: sala.board,
@@ -405,6 +494,9 @@ function executarJogada(ws, mensagem) {
     console.log(
         `Próximo turno: ${sala.currentTurn}`
     );
+
+    // Começa os 15 segundos do próximo jogador
+    iniciarCronometroTurno(sala);
 }
 
 // Processa mensagens do chat
@@ -478,7 +570,6 @@ function solicitarRevanche(ws) {
         return;
     }
 
-    // Só permite revanche depois que a partida terminar
     if (sala.status !== "FINISHED") {
         enviar(ws, {
             type: "NEW_GAME_ERROR",
@@ -488,7 +579,6 @@ function solicitarRevanche(ws) {
         return;
     }
 
-    // Evita o mesmo jogador pedir duas vezes
     if (sala.rematchRequests.has(ws)) {
         enviar(ws, {
             type: "NEW_GAME_ERROR",
@@ -504,7 +594,6 @@ function solicitarRevanche(ws) {
         `${ws.playerName} solicitou revanche na sala ${roomCode}`
     );
 
-    // Primeiro jogador pediu: aguarda o outro aceitar
     if (sala.rematchRequests.size === 1) {
         enviarParaSala(sala, {
             type: "REMATCH_REQUESTED",
@@ -515,7 +604,6 @@ function solicitarRevanche(ws) {
         return;
     }
 
-    // Quando os dois solicitarem, a revanche começa
     if (sala.rematchRequests.size === 2) {
         iniciarNovaPartida(sala);
     }
@@ -523,6 +611,8 @@ function solicitarRevanche(ws) {
 
 // Reinicia a partida sem destruir a sala
 function iniciarNovaPartida(sala) {
+    cancelarCronometroTurno(sala);
+
     // Limpa o tabuleiro
     sala.board = ["", "", "", "", "", "", "", "", ""];
 
@@ -534,7 +624,6 @@ function iniciarNovaPartida(sala) {
             player.symbol = "X";
         }
 
-        // Atualiza também o símbolo armazenado na conexão
         player.socket.playerSymbol = player.symbol;
     }
 
@@ -543,7 +632,6 @@ function iniciarNovaPartida(sala) {
 
     sala.status = "PLAYING";
 
-    // Limpa os pedidos de revanche
     sala.rematchRequests.clear();
 
     enviarParaSala(sala, {
@@ -576,6 +664,9 @@ function iniciarNovaPartida(sala) {
         "Placar:",
         obterPlacar(sala)
     );
+
+    // Começa novamente o cronômetro de 15 segundos
+    iniciarCronometroTurno(sala);
 }
 
 // Inicia o servidor
