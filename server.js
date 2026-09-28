@@ -1,30 +1,24 @@
 const express = require("express");
 const http = require("http");
-const { WebSocketServer } = require("ws");
+const { WebSocketServer, WebSocket } = require("ws");
 
 const app = express();
 const PORT = 3000;
 
-// Tempo máximo para cada turno
 const TEMPO_TURNO_MS = 15000;
+const TEMPO_RECONEXAO_MS = 30000;
 
-// Cria o servidor HTTP
 const server = http.createServer(app);
-
-// Cria o servidor WebSocket usando o mesmo servidor HTTP
 const wss = new WebSocketServer({ server });
 
-// Salas abertas no servidor
 const rooms = new Map();
 
 app.get("/", (req, res) => {
     res.send("Servidor do Jogo da Velha funcionando!");
 });
 
-// Gera código aleatório de 6 caracteres
 function gerarCodigoSala() {
     const caracteres = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-
     let codigo = "";
 
     for (let i = 0; i < 6; i++) {
@@ -35,19 +29,20 @@ function gerarCodigoSala() {
     return codigo;
 }
 
-// Facilita o envio de mensagens JSON para um jogador
 function enviar(ws, dados) {
-    ws.send(JSON.stringify(dados));
-}
-
-// Envia uma mensagem para todos os jogadores da sala
-function enviarParaSala(sala, dados) {
-    for (const jogador of sala.players) {
-        enviar(jogador.socket, dados);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(dados));
     }
 }
 
-// Retorna o placar atual da sala
+function enviarParaSala(sala, dados) {
+    for (const jogador of sala.players) {
+        if (jogador.connected && jogador.socket) {
+            enviar(jogador.socket, dados);
+        }
+    }
+}
+
 function obterPlacar(sala) {
     return sala.players.map((player) => ({
         name: player.name,
@@ -56,7 +51,6 @@ function obterPlacar(sala) {
     }));
 }
 
-// Cancela o cronômetro atual da sala
 function cancelarCronometroTurno(sala) {
     if (sala.turnTimer) {
         clearTimeout(sala.turnTimer);
@@ -66,7 +60,6 @@ function cancelarCronometroTurno(sala) {
     sala.turnDeadline = null;
 }
 
-// Inicia o cronômetro de 15 segundos para o turno atual
 function iniciarCronometroTurno(sala) {
     cancelarCronometroTurno(sala);
 
@@ -74,11 +67,15 @@ function iniciarCronometroTurno(sala) {
         return;
     }
 
+    // Se alguém estiver desconectado, a partida fica pausada
+    if (sala.players.some((player) => !player.connected)) {
+        return;
+    }
+
     const simboloDoTurno = sala.currentTurn;
 
     sala.turnDeadline = Date.now() + TEMPO_TURNO_MS;
 
-    // Avisa os clientes que começou um novo cronômetro
     enviarParaSala(sala, {
         type: "TURN_TIMER",
         currentTurn: simboloDoTurno,
@@ -87,7 +84,6 @@ function iniciarCronometroTurno(sala) {
     });
 
     sala.turnTimer = setTimeout(() => {
-        // Garante que a partida ainda existe e que o turno não mudou
         if (
             sala.status !== "PLAYING" ||
             sala.currentTurn !== simboloDoTurno
@@ -97,7 +93,6 @@ function iniciarCronometroTurno(sala) {
 
         const jogadorQuePerdeuOTurno = simboloDoTurno;
 
-        // Passa a vez automaticamente
         sala.currentTurn =
             jogadorQuePerdeuOTurno === "X" ? "O" : "X";
 
@@ -111,7 +106,6 @@ function iniciarCronometroTurno(sala) {
             message: `Tempo do jogador ${jogadorQuePerdeuOTurno} esgotado.`
         });
 
-        // O tabuleiro não muda, mas o turno precisa ser sincronizado
         enviarParaSala(sala, {
             type: "BOARD_UPDATE",
             board: sala.board,
@@ -123,26 +117,21 @@ function iniciarCronometroTurno(sala) {
             `Próximo turno: ${sala.currentTurn}`
         );
 
-        // Começa o cronômetro do novo jogador
         iniciarCronometroTurno(sala);
 
     }, TEMPO_TURNO_MS);
 }
 
-// Verifica se existe uma combinação vencedora
 function verificarVencedor(board) {
     const combinacoes = [
-        // Horizontais
         [0, 1, 2],
         [3, 4, 5],
         [6, 7, 8],
 
-        // Verticais
         [0, 3, 6],
         [1, 4, 7],
         [2, 5, 8],
 
-        // Diagonais
         [0, 4, 8],
         [2, 4, 6]
     ];
@@ -162,12 +151,10 @@ function verificarVencedor(board) {
     return null;
 }
 
-// Verifica se todas as posições foram preenchidas
 function verificarEmpate(board) {
     return board.every((celula) => celula !== "");
 }
 
-// Quando um jogador se conecta ao servidor WebSocket
 wss.on("connection", (ws) => {
     console.log("Novo jogador conectado via WebSocket!");
 
@@ -221,13 +208,12 @@ wss.on("connection", (ws) => {
     });
 
     ws.on("close", () => {
-        console.log("Jogador desconectado.");
+        tratarDesconexao(ws);
     });
 });
 
-// Cria ou entra em uma sala
 function entrarNaSala(ws, mensagem) {
-    const playerName = mensagem.playerName;
+    const playerName = String(mensagem.playerName || "").trim();
     let roomCode = mensagem.roomCode;
 
     if (!playerName) {
@@ -239,7 +225,6 @@ function entrarNaSala(ws, mensagem) {
         return;
     }
 
-    // Se não informou código, cria uma nova sala
     if (!roomCode) {
         do {
             roomCode = gerarCodigoSala();
@@ -251,11 +236,7 @@ function entrarNaSala(ws, mensagem) {
             board: ["", "", "", "", "", "", "", "", ""],
             currentTurn: "X",
             status: "WAITING",
-
-            // Jogadores que pediram revanche
             rematchRequests: new Set(),
-
-            // Controle do cronômetro
             turnTimer: null,
             turnDeadline: null
         };
@@ -263,7 +244,7 @@ function entrarNaSala(ws, mensagem) {
         rooms.set(roomCode, novaSala);
     }
 
-    roomCode = roomCode.toUpperCase();
+    roomCode = String(roomCode).trim().toUpperCase();
 
     const sala = rooms.get(roomCode);
 
@@ -273,6 +254,18 @@ function entrarNaSala(ws, mensagem) {
             message: "Sala não encontrada."
         });
 
+        return;
+    }
+
+    // Verifica se esse jogador está se reconectando
+    const jogadorDesconectado = sala.players.find(
+        (player) =>
+            player.name === playerName &&
+            !player.connected
+    );
+
+    if (jogadorDesconectado) {
+        reconectarJogador(ws, sala, jogadorDesconectado);
         return;
     }
 
@@ -291,9 +284,9 @@ function entrarNaSala(ws, mensagem) {
         name: playerName,
         symbol: simbolo,
         socket: ws,
-
-        // Placar individual durante a sessão da sala
-        score: 0
+        score: 0,
+        connected: true,
+        disconnectTimer: null
     };
 
     sala.players.push(jogador);
@@ -313,7 +306,6 @@ function entrarNaSala(ws, mensagem) {
         `${playerName} entrou na sala ${roomCode} como ${simbolo}`
     );
 
-    // Quando chegam dois jogadores, inicia a partida
     if (sala.players.length === 2) {
         sala.status = "PLAYING";
 
@@ -332,12 +324,10 @@ function entrarNaSala(ws, mensagem) {
 
         console.log(`Partida iniciada na sala ${roomCode}`);
 
-        // X possui 15 segundos para realizar a primeira jogada
         iniciarCronometroTurno(sala);
     }
 }
 
-// Processa uma jogada
 function executarJogada(ws, mensagem) {
     const roomCode = ws.roomCode;
     const position = mensagem.position;
@@ -357,6 +347,15 @@ function executarJogada(ws, mensagem) {
         enviar(ws, {
             type: "INVALID_MOVE",
             message: "A partida não está disponível."
+        });
+
+        return;
+    }
+
+    if (sala.players.some((player) => !player.connected)) {
+        enviar(ws, {
+            type: "INVALID_MOVE",
+            message: "A partida está pausada aguardando reconexão."
         });
 
         return;
@@ -391,10 +390,8 @@ function executarJogada(ws, mensagem) {
         return;
     }
 
-    // A jogada foi validada. Cancela o cronômetro atual.
     cancelarCronometroTurno(sala);
 
-    // Registra a jogada
     sala.board[position] = simboloJogador;
 
     console.log(
@@ -403,7 +400,6 @@ function executarJogada(ws, mensagem) {
 
     const vencedor = verificarVencedor(sala.board);
 
-    // Vitória
     if (vencedor) {
         sala.status = "FINISHED";
         sala.currentTurn = null;
@@ -443,15 +439,9 @@ function executarJogada(ws, mensagem) {
             `Fim de jogo! ${ws.playerName} venceu com ${vencedor}.`
         );
 
-        console.log(
-            "Placar:",
-            obterPlacar(sala)
-        );
-
         return;
     }
 
-    // Empate
     if (verificarEmpate(sala.board)) {
         sala.status = "FINISHED";
         sala.currentTurn = null;
@@ -482,8 +472,8 @@ function executarJogada(ws, mensagem) {
         return;
     }
 
-    // Continua a partida
-    sala.currentTurn = simboloJogador === "X" ? "O" : "X";
+    sala.currentTurn =
+        simboloJogador === "X" ? "O" : "X";
 
     enviarParaSala(sala, {
         type: "BOARD_UPDATE",
@@ -495,11 +485,9 @@ function executarJogada(ws, mensagem) {
         `Próximo turno: ${sala.currentTurn}`
     );
 
-    // Começa os 15 segundos do próximo jogador
     iniciarCronometroTurno(sala);
 }
 
-// Processa mensagens do chat
 function enviarMensagemChat(ws, mensagem) {
     const roomCode = ws.roomCode;
 
@@ -523,7 +511,8 @@ function enviarMensagemChat(ws, mensagem) {
         return;
     }
 
-    const texto = String(mensagem.message || "").trim();
+    const texto =
+        String(mensagem.message || "").trim();
 
     if (!texto) {
         enviar(ws, {
@@ -546,7 +535,6 @@ function enviarMensagemChat(ws, mensagem) {
     );
 }
 
-// Jogador solicita revanche
 function solicitarRevanche(ws) {
     const roomCode = ws.roomCode;
 
@@ -609,14 +597,12 @@ function solicitarRevanche(ws) {
     }
 }
 
-// Reinicia a partida sem destruir a sala
 function iniciarNovaPartida(sala) {
     cancelarCronometroTurno(sala);
 
-    // Limpa o tabuleiro
-    sala.board = ["", "", "", "", "", "", "", "", ""];
+    sala.board =
+        ["", "", "", "", "", "", "", "", ""];
 
-    // Inverte os símbolos dos dois jogadores
     for (const player of sala.players) {
         if (player.symbol === "X") {
             player.symbol = "O";
@@ -627,11 +613,8 @@ function iniciarNovaPartida(sala) {
         player.socket.playerSymbol = player.symbol;
     }
 
-    // X começa a nova partida
     sala.currentTurn = "X";
-
     sala.status = "PLAYING";
-
     sala.rematchRequests.clear();
 
     enviarParaSala(sala, {
@@ -652,24 +635,179 @@ function iniciarNovaPartida(sala) {
         `Nova partida iniciada na sala ${sala.code}`
     );
 
-    console.log(
-        "Jogadores:",
-        sala.players.map((player) => ({
-            name: player.name,
-            symbol: player.symbol
-        }))
-    );
-
-    console.log(
-        "Placar:",
-        obterPlacar(sala)
-    );
-
-    // Começa novamente o cronômetro de 15 segundos
     iniciarCronometroTurno(sala);
 }
 
-// Inicia o servidor
+// Trata desconexão de jogador
+function tratarDesconexao(ws) {
+    const roomCode = ws.roomCode;
+
+    if (!roomCode) {
+        console.log("Cliente desconectado antes de entrar em uma sala.");
+        return;
+    }
+
+    const sala = rooms.get(roomCode);
+
+    if (!sala) {
+        return;
+    }
+
+    // Procura especificamente o jogador que usava este socket
+    const jogador = sala.players.find(
+        (player) => player.socket === ws
+    );
+
+    if (!jogador || !jogador.connected) {
+        return;
+    }
+
+    jogador.connected = false;
+    jogador.socket = null;
+
+    console.log(
+        `${jogador.name} desconectou da sala ${roomCode}`
+    );
+
+    // Se estava sozinho aguardando o segundo jogador,
+    // remove a sala
+    if (sala.status === "WAITING") {
+        rooms.delete(roomCode);
+
+        console.log(
+            `Sala ${roomCode} removida porque ficou vazia.`
+        );
+
+        return;
+    }
+
+    // Se a partida já acabou, não existe W.O.
+    if (sala.status !== "PLAYING") {
+        return;
+    }
+
+    // Pausa o cronômetro de jogada
+    cancelarCronometroTurno(sala);
+
+    enviarParaSala(sala, {
+        type: "PLAYER_DISCONNECTED",
+        playerName: jogador.name,
+        playerSymbol: jogador.symbol,
+        reconnectSeconds: TEMPO_RECONEXAO_MS / 1000,
+        message:
+            `${jogador.name} desconectou. ` +
+            `Aguardando reconexão por 30 segundos.`
+    });
+
+    jogador.disconnectTimer = setTimeout(() => {
+        finalizarPorWO(sala, jogador);
+    }, TEMPO_RECONEXAO_MS);
+}
+
+// Reconecta um jogador na mesma sala
+function reconectarJogador(ws, sala, jogador) {
+    if (jogador.disconnectTimer) {
+        clearTimeout(jogador.disconnectTimer);
+        jogador.disconnectTimer = null;
+    }
+
+    jogador.socket = ws;
+    jogador.connected = true;
+
+    ws.roomCode = sala.code;
+    ws.playerName = jogador.name;
+    ws.playerSymbol = jogador.symbol;
+
+    enviar(ws, {
+        type: "ROOM_RECONNECTED",
+        roomCode: sala.code,
+        playerName: jogador.name,
+        playerSymbol: jogador.symbol,
+        board: sala.board,
+        currentTurn: sala.currentTurn,
+        status: sala.status,
+        score: obterPlacar(sala),
+
+        players: sala.players.map((player) => ({
+            name: player.name,
+            symbol: player.symbol,
+            connected: player.connected
+        }))
+    });
+
+    enviarParaSala(sala, {
+        type: "PLAYER_RECONNECTED",
+        playerName: jogador.name,
+        playerSymbol: jogador.symbol,
+        message: `${jogador.name} reconectou à partida.`
+    });
+
+    console.log(
+        `${jogador.name} reconectou na sala ${sala.code}`
+    );
+
+    // Se a partida ainda estiver acontecendo,
+    // volta a contar o tempo do turno atual
+    if (sala.status === "PLAYING") {
+        iniciarCronometroTurno(sala);
+    }
+}
+
+// Finaliza partida por W.O.
+function finalizarPorWO(sala, jogadorDesconectado) {
+    jogadorDesconectado.disconnectTimer = null;
+
+    // Se ele já reconectou, não existe W.O.
+    if (jogadorDesconectado.connected) {
+        return;
+    }
+
+    if (sala.status !== "PLAYING") {
+        return;
+    }
+
+    cancelarCronometroTurno(sala);
+
+    const vencedor = sala.players.find(
+        (player) =>
+            player !== jogadorDesconectado &&
+            player.connected
+    );
+
+    sala.status = "FINISHED";
+    sala.currentTurn = null;
+    sala.rematchRequests.clear();
+
+    if (!vencedor) {
+        console.log(
+            `Partida da sala ${sala.code} encerrada sem vencedor.`
+        );
+
+        return;
+    }
+
+    vencedor.score++;
+
+    enviarParaSala(sala, {
+        type: "GAME_OVER",
+        result: "WO",
+        winner: vencedor.symbol,
+        winnerName: vencedor.name,
+        disconnectedPlayer: jogadorDesconectado.name,
+        score: obterPlacar(sala)
+    });
+
+    enviarParaSala(sala, {
+        type: "SCORE_UPDATE",
+        score: obterPlacar(sala)
+    });
+
+    console.log(
+        `${vencedor.name} venceu por W.O. ` +
+        `após desconexão de ${jogadorDesconectado.name}.`
+    );
+}
+
 server.listen(PORT, () => {
     console.log(`Servidor rodando em http://localhost:${PORT}`);
     console.log(`WebSocket rodando em ws://localhost:${PORT}`);
