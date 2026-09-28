@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jogo da Velha Multiplayer</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main>
+    <p id="status-conexao">Conectando ao servidor...</p>
+
+    <section id="tela-lobby">
+      <h1>Jogo da Velha</h1>
+
+      <div class="campos">
+        <label for="input-nome">Seu apelido</label>
+        <input id="input-nome" type="text" maxlength="20" placeholder="Ex.: Pedro">
+
+        <label for="input-codigo">Código da sala</label>
+        <input id="input-codigo" type="text" maxlength="10" placeholder="Ex.: AB12">
+        <small>Para entrar em uma sala, digite o código. Para criar uma nova, deixe em branco.</small>
+      </div>
+
+      <div id="area-sala" hidden>
+        <p>Código da sua sala:</p>
+        <strong id="codigo-sala"></strong>
+        <p>Envie o código para o outro jogador e aguarde.</p>
+      </div>
+
+      <p id="msg-lobby"></p>
+
+      <div class="botoes">
+        <button id="btn-criar" type="button">Criar sala</button>
+        <button id="btn-entrar" type="button">Entrar por código</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="js/websocket.js"></script>
+</body>
+</html>
