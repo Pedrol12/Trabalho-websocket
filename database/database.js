@@ -165,16 +165,13 @@ async function buscarOuCriarJogador(nickname) {
 
     return {
         id_jogador: resultado.lastID,
-        nickname: nickname,
+        nickname,
         vitorias_totais: 0,
         derrotas_totais: 0
     };
 }
 
-async function registrarVitoriaDerrota(
-    idVencedor,
-    idPerdedor
-) {
+async function registrarVitoriaDerrota(idVencedor, idPerdedor) {
     await executar(
         `
         UPDATE JOGADOR
@@ -213,7 +210,8 @@ async function codigoSalaExiste(codigoSala) {
 
 async function criarSalaBanco(
     codigoSala,
-    idJogadorHost
+    idJogadorHost,
+    privada = true
 ) {
     const resultado = await executar(
         `
@@ -223,11 +221,12 @@ async function criarSalaBanco(
             privada,
             status_sala
         )
-        VALUES (?, ?, 1, 'AGUARDANDO')
+        VALUES (?, ?, ?, 'AGUARDANDO')
         `,
         [
             idJogadorHost,
-            codigoSala
+            codigoSala,
+            privada ? 1 : 0
         ]
     );
 
@@ -253,10 +252,7 @@ async function adicionarVisitanteSala(
     );
 }
 
-async function atualizarStatusSala(
-    idSala,
-    status
-) {
+async function atualizarStatusSala(idSala, status) {
     await executar(
         `
         UPDATE SALA_JOGO
@@ -358,7 +354,7 @@ async function finalizarPartida(
 }
 
 // ======================================================
-// JOGADAS
+// JOGADA
 // ======================================================
 
 async function registrarJogada(
@@ -418,7 +414,6 @@ async function registrarMensagemChat(
 
 module.exports = {
     db,
-
     inicializarBanco,
 
     buscarOuCriarJogador,
@@ -435,7 +430,6 @@ module.exports = {
     finalizarPartida,
 
     registrarJogada,
-
     registrarMensagemChat
 };
 
@@ -446,9 +440,7 @@ module.exports = {
 if (require.main === module) {
     inicializarBanco()
         .then(() => {
-            console.log(
-                "Banco inicializado com sucesso!"
-            );
+            console.log("Banco inicializado com sucesso!");
         })
         .catch((erro) => {
             console.error(

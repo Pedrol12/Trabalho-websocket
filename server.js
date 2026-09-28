@@ -39,12 +39,17 @@ app.get("/", (req, res) => {
 // ======================================================
 
 function gerarCodigoSala() {
-    const caracteres = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    const caracteres =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
     let codigo = "";
 
     for (let i = 0; i < 6; i++) {
-        const indice = Math.floor(Math.random() * caracteres.length);
+        const indice =
+            Math.floor(
+                Math.random() * caracteres.length
+            );
+
         codigo += caracteres[indice];
     }
 
@@ -52,18 +57,79 @@ function gerarCodigoSala() {
 }
 
 function enviar(ws, dados) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    if (
+        ws &&
+        ws.readyState === WebSocket.OPEN
+    ) {
         ws.send(JSON.stringify(dados));
     }
 }
 
 function enviarParaSala(sala, dados) {
     for (const jogador of sala.players) {
-        if (jogador.connected && jogador.socket) {
+        if (
+            jogador.connected &&
+            jogador.socket
+        ) {
             enviar(jogador.socket, dados);
         }
     }
 }
+
+// ======================================================
+// SALAS PÚBLICAS
+// ======================================================
+
+function obterSalasPublicas() {
+    return Array.from(rooms.values())
+        .filter((sala) => {
+            return (
+                sala.private === false &&
+                sala.status === "WAITING" &&
+                sala.players.length < 2
+            );
+        })
+        .map((sala) => ({
+            roomCode: sala.code,
+
+            hostName:
+                sala.players[0]?.name || null,
+
+            playersCount:
+                sala.players.length,
+
+            maxPlayers: 2,
+
+            status:
+                sala.status
+        }));
+}
+
+function enviarListaSalasPublicas(ws) {
+    enviar(ws, {
+        type: "ROOM_LIST_UPDATE",
+
+        rooms:
+            obterSalasPublicas()
+    });
+}
+
+function broadcastListaSalasPublicas() {
+    const dados = {
+        type: "ROOM_LIST_UPDATE",
+
+        rooms:
+            obterSalasPublicas()
+    };
+
+    for (const cliente of wss.clients) {
+        enviar(cliente, dados);
+    }
+}
+
+// ======================================================
+// PLACAR
+// ======================================================
 
 function obterPlacar(sala) {
     return sala.players.map((player) => ({
@@ -75,8 +141,11 @@ function obterPlacar(sala) {
 
 function obterPlacarHostVisitante(sala) {
     return {
-        placarHost: sala.players[0]?.score || 0,
-        placarVisitante: sala.players[1]?.score || 0
+        placarHost:
+            sala.players[0]?.score || 0,
+
+        placarVisitante:
+            sala.players[1]?.score || 0
     };
 }
 
@@ -87,6 +156,7 @@ function obterPlacarHostVisitante(sala) {
 function cancelarCronometroTurno(sala) {
     if (sala.turnTimer) {
         clearTimeout(sala.turnTimer);
+
         sala.turnTimer = null;
     }
 
@@ -96,81 +166,111 @@ function cancelarCronometroTurno(sala) {
 function iniciarCronometroTurno(sala) {
     cancelarCronometroTurno(sala);
 
-    if (sala.status !== "PLAYING" || !sala.currentTurn) {
+    if (
+        sala.status !== "PLAYING" ||
+        !sala.currentTurn
+    ) {
         return;
     }
 
-    if (sala.players.some((player) => !player.connected)) {
+    if (
+        sala.players.some(
+            (player) => !player.connected
+        )
+    ) {
         return;
     }
 
-    const simboloDoTurno = sala.currentTurn;
+    const simboloDoTurno =
+        sala.currentTurn;
 
-    sala.turnDeadline = Date.now() + TEMPO_TURNO_MS;
+    sala.turnDeadline =
+        Date.now() + TEMPO_TURNO_MS;
 
     enviarParaSala(sala, {
         type: "TURN_TIMER",
-        currentTurn: simboloDoTurno,
-        seconds: TEMPO_TURNO_MS / 1000,
-        deadline: sala.turnDeadline
+
+        currentTurn:
+            simboloDoTurno,
+
+        seconds:
+            TEMPO_TURNO_MS / 1000,
+
+        deadline:
+            sala.turnDeadline
     });
 
-    sala.turnTimer = setTimeout(async () => {
-        if (
-            sala.status !== "PLAYING" ||
-            sala.currentTurn !== simboloDoTurno
-        ) {
-            return;
-        }
-
-        const jogadorQuePerdeuOTurno = simboloDoTurno;
-
-        sala.currentTurn =
-            jogadorQuePerdeuOTurno === "X" ? "O" : "X";
-
-        sala.turnTimer = null;
-        sala.turnDeadline = null;
-
-        if (sala.idPartida) {
-            try {
-                await atualizarTurnoPartida(
-                    sala.idPartida,
-                    sala.currentTurn
-                );
-            } catch (erro) {
-                console.error(
-                    "Erro ao atualizar turno no banco:",
-                    erro.message
-                );
+    sala.turnTimer =
+        setTimeout(async () => {
+            if (
+                sala.status !== "PLAYING" ||
+                sala.currentTurn !== simboloDoTurno
+            ) {
+                return;
             }
-        }
 
-        enviarParaSala(sala, {
-            type: "TURN_TIMEOUT",
-            timedOutSymbol: jogadorQuePerdeuOTurno,
-            nextTurn: sala.currentTurn,
-            message:
-                `Tempo do jogador ${jogadorQuePerdeuOTurno} esgotado.`
-        });
+            const jogadorQuePerdeuOTurno =
+                simboloDoTurno;
 
-        enviarParaSala(sala, {
-            type: "BOARD_UPDATE",
-            board: sala.board,
-            nextTurn: sala.currentTurn
-        });
+            sala.currentTurn =
+                jogadorQuePerdeuOTurno === "X"
+                    ? "O"
+                    : "X";
 
-        console.log(
-            `Tempo do jogador ${jogadorQuePerdeuOTurno} esgotado. ` +
-            `Próximo turno: ${sala.currentTurn}`
-        );
+            sala.turnTimer = null;
+            sala.turnDeadline = null;
 
-        iniciarCronometroTurno(sala);
+            if (sala.idPartida) {
+                try {
+                    await atualizarTurnoPartida(
+                        sala.idPartida,
+                        sala.currentTurn
+                    );
+                } catch (erro) {
+                    console.error(
+                        "Erro ao atualizar turno no banco:",
+                        erro.message
+                    );
+                }
+            }
 
-    }, TEMPO_TURNO_MS);
+            enviarParaSala(sala, {
+                type: "TURN_TIMEOUT",
+
+                timedOutSymbol:
+                    jogadorQuePerdeuOTurno,
+
+                nextTurn:
+                    sala.currentTurn,
+
+                message:
+                    `Tempo do jogador ` +
+                    `${jogadorQuePerdeuOTurno} esgotado.`
+            });
+
+            enviarParaSala(sala, {
+                type: "BOARD_UPDATE",
+
+                board:
+                    sala.board,
+
+                nextTurn:
+                    sala.currentTurn
+            });
+
+            console.log(
+                `Tempo do jogador ` +
+                `${jogadorQuePerdeuOTurno} esgotado. ` +
+                `Próximo turno: ${sala.currentTurn}`
+            );
+
+            iniciarCronometroTurno(sala);
+
+        }, TEMPO_TURNO_MS);
 }
 
 // ======================================================
-// REGRAS DO JOGO
+// REGRAS
 // ======================================================
 
 function verificarVencedor(board) {
@@ -203,7 +303,9 @@ function verificarVencedor(board) {
 }
 
 function verificarEmpate(board) {
-    return board.every((celula) => celula !== "");
+    return board.every(
+        (celula) => celula !== ""
+    );
 }
 
 // ======================================================
@@ -211,7 +313,9 @@ function verificarEmpate(board) {
 // ======================================================
 
 wss.on("connection", (ws) => {
-    console.log("Novo jogador conectado via WebSocket!");
+    console.log(
+        "Novo jogador conectado via WebSocket!"
+    );
 
     ws.roomCode = null;
     ws.playerName = null;
@@ -220,27 +324,52 @@ wss.on("connection", (ws) => {
 
     enviar(ws, {
         type: "CONNECTED",
-        message: "Conectado ao servidor WebSocket!"
+
+        message:
+            "Conectado ao servidor WebSocket!"
     });
+
+    // Sempre que alguém conecta,
+    // recebe a lista pública atual.
+    enviarListaSalasPublicas(ws);
 
     ws.on("message", async (data) => {
         try {
-            const mensagem = JSON.parse(data.toString());
+            const mensagem =
+                JSON.parse(
+                    data.toString()
+                );
 
-            console.log("Mensagem recebida:", mensagem);
+            console.log(
+                "Mensagem recebida:",
+                mensagem
+            );
 
             switch (mensagem.type) {
 
                 case "JOIN_ROOM":
-                    await entrarNaSala(ws, mensagem);
+                    await entrarNaSala(
+                        ws,
+                        mensagem
+                    );
+                    break;
+
+                case "LIST_ROOMS":
+                    enviarListaSalasPublicas(ws);
                     break;
 
                 case "MOVE":
-                    await executarJogada(ws, mensagem);
+                    await executarJogada(
+                        ws,
+                        mensagem
+                    );
                     break;
 
                 case "CHAT":
-                    await enviarMensagemChat(ws, mensagem);
+                    await enviarMensagemChat(
+                        ws,
+                        mensagem
+                    );
                     break;
 
                 case "NEW_GAME":
@@ -250,7 +379,9 @@ wss.on("connection", (ws) => {
                 default:
                     enviar(ws, {
                         type: "ERROR",
-                        message: "Tipo de mensagem desconhecido."
+
+                        message:
+                            "Tipo de mensagem desconhecido."
                     });
             }
 
@@ -262,7 +393,9 @@ wss.on("connection", (ws) => {
 
             enviar(ws, {
                 type: "ERROR",
-                message: "Não foi possível processar a mensagem."
+
+                message:
+                    "Não foi possível processar a mensagem."
             });
         }
     });
@@ -282,16 +415,24 @@ wss.on("connection", (ws) => {
 // SALAS
 // ======================================================
 
-async function entrarNaSala(ws, mensagem) {
+async function entrarNaSala(
+    ws,
+    mensagem
+) {
     const playerName =
-        String(mensagem.playerName || "").trim();
+        String(
+            mensagem.playerName || ""
+        ).trim();
 
-    let roomCode = mensagem.roomCode;
+    let roomCode =
+        mensagem.roomCode;
 
     if (!playerName) {
         enviar(ws, {
             type: "ERROR",
-            message: "Nome do jogador é obrigatório."
+
+            message:
+                "Nome do jogador é obrigatório."
         });
 
         return;
@@ -301,34 +442,54 @@ async function entrarNaSala(ws, mensagem) {
         let sala;
         let jogadorBanco;
 
-        // CRIAÇÃO DA SALA
-        if (!roomCode) {
+        // ==================================================
+        // CRIAR SALA
+        // ==================================================
 
+        if (!roomCode) {
             jogadorBanco =
-                await buscarOuCriarJogador(playerName);
+                await buscarOuCriarJogador(
+                    playerName
+                );
+
+            // Privada é o padrão.
+            // Para criar pública:
+            // private: false
+            const privada =
+                mensagem.private !== false;
 
             let codigoJaExiste;
 
             do {
-                roomCode = gerarCodigoSala();
+                roomCode =
+                    gerarCodigoSala();
 
                 codigoJaExiste =
                     rooms.has(roomCode) ||
-                    await codigoSalaExiste(roomCode);
+                    await codigoSalaExiste(
+                        roomCode
+                    );
 
             } while (codigoJaExiste);
 
             const idSala =
                 await criarSalaBanco(
                     roomCode,
-                    jogadorBanco.id_jogador
+
+                    jogadorBanco.id_jogador,
+
+                    privada
                 );
 
             sala = {
-                idSala: idSala,
+                idSala,
                 idPartida: null,
 
-                code: roomCode,
+                code:
+                    roomCode,
+
+                private:
+                    privada,
 
                 players: [],
 
@@ -338,14 +499,20 @@ async function entrarNaSala(ws, mensagem) {
                     "", "", ""
                 ],
 
-                currentTurn: "X",
+                currentTurn:
+                    "X",
 
-                status: "WAITING",
+                status:
+                    "WAITING",
 
-                rematchRequests: new Set(),
+                rematchRequests:
+                    new Set(),
 
-                turnTimer: null,
-                turnDeadline: null
+                turnTimer:
+                    null,
+
+                turnDeadline:
+                    null
             };
 
             rooms.set(
@@ -355,13 +522,16 @@ async function entrarNaSala(ws, mensagem) {
 
             console.log(
                 `Sala ${roomCode} criada no banco ` +
-                `com ID ${idSala}`
+                `com ID ${idSala}. ` +
+                `Privada: ${privada}`
             );
         }
 
-        // ENTRADA EM SALA EXISTENTE
-        else {
+        // ==================================================
+        // ENTRAR EM SALA
+        // ==================================================
 
+        else {
             roomCode =
                 String(roomCode)
                     .trim()
@@ -373,7 +543,9 @@ async function entrarNaSala(ws, mensagem) {
             if (!sala) {
                 enviar(ws, {
                     type: "ROOM_NOT_FOUND",
-                    message: "Sala não encontrada."
+
+                    message:
+                        "Sala não encontrada."
                 });
 
                 return;
@@ -388,7 +560,6 @@ async function entrarNaSala(ws, mensagem) {
                 );
 
             if (jogadorDesconectado) {
-
                 reconectarJogador(
                     ws,
                     sala,
@@ -398,9 +569,12 @@ async function entrarNaSala(ws, mensagem) {
                 return;
             }
 
-            if (sala.players.length >= 2) {
+            if (
+                sala.players.length >= 2
+            ) {
                 enviar(ws, {
                     type: "ROOM_FULL",
+
                     message:
                         "A sala já possui dois jogadores."
                 });
@@ -414,6 +588,10 @@ async function entrarNaSala(ws, mensagem) {
                 );
         }
 
+        // ==================================================
+        // JOGADOR
+        // ==================================================
+
         const simbolo =
             sala.players.length === 0
                 ? "X"
@@ -423,44 +601,61 @@ async function entrarNaSala(ws, mensagem) {
             idJogador:
                 jogadorBanco.id_jogador,
 
-            name: playerName,
+            name:
+                playerName,
 
-            symbol: simbolo,
+            symbol:
+                simbolo,
 
-            socket: ws,
+            socket:
+                ws,
 
-            score: 0,
+            score:
+                0,
 
-            connected: true,
+            connected:
+                true,
 
-            disconnectTimer: null
+            disconnectTimer:
+                null
         };
 
-        // SEGUNDO JOGADOR
-        if (sala.players.length === 1) {
-
+        if (
+            sala.players.length === 1
+        ) {
             await adicionarVisitanteSala(
                 sala.idSala,
+
                 jogadorBanco.id_jogador
             );
         }
 
         sala.players.push(jogador);
 
-        ws.roomCode = roomCode;
-        ws.playerName = playerName;
-        ws.playerSymbol = simbolo;
+        ws.roomCode =
+            roomCode;
+
+        ws.playerName =
+            playerName;
+
+        ws.playerSymbol =
+            simbolo;
+
         ws.playerId =
             jogadorBanco.id_jogador;
 
         enviar(ws, {
             type: "ROOM_JOINED",
 
-            roomCode: roomCode,
+            roomCode,
 
-            playerName: playerName,
+            playerName,
 
-            playerSymbol: simbolo
+            playerSymbol:
+                simbolo,
+
+            private:
+                sala.private
         });
 
         console.log(
@@ -473,9 +668,17 @@ async function entrarNaSala(ws, mensagem) {
             `${jogadorBanco.id_jogador} no banco`
         );
 
-        // COMEÇA A PARTIDA
-        if (sala.players.length === 2) {
+        // A lista pública mudou:
+        // nova sala apareceu ou recebeu jogador.
+        broadcastListaSalasPublicas();
 
+        // ==================================================
+        // COMEÇA PARTIDA
+        // ==================================================
+
+        if (
+            sala.players.length === 2
+        ) {
             sala.status =
                 "PLAYING";
 
@@ -495,8 +698,11 @@ async function entrarNaSala(ws, mensagem) {
             sala.idPartida =
                 await criarPartida(
                     sala.idSala,
+
                     sala.currentTurn,
+
                     placarHost,
+
                     placarVisitante
                 );
 
@@ -507,7 +713,7 @@ async function entrarNaSala(ws, mensagem) {
             enviarParaSala(sala, {
                 type: "GAME_STARTED",
 
-                roomCode: roomCode,
+                roomCode,
 
                 currentTurn:
                     sala.currentTurn,
@@ -531,13 +737,16 @@ async function entrarNaSala(ws, mensagem) {
                 `Partida iniciada na sala ${roomCode}`
             );
 
+            // Agora a sala pública ficou cheia
+            // e precisa sair do lobby.
+            broadcastListaSalasPublicas();
+
             iniciarCronometroTurno(
                 sala
             );
         }
 
     } catch (erro) {
-
         console.error(
             "Erro ao registrar jogador/sala/partida no banco:",
             erro
@@ -545,6 +754,7 @@ async function entrarNaSala(ws, mensagem) {
 
         enviar(ws, {
             type: "DATABASE_ERROR",
+
             message:
                 "Não foi possível registrar os dados no banco."
         });
@@ -552,7 +762,7 @@ async function entrarNaSala(ws, mensagem) {
 }
 
 // ======================================================
-// JOGADAS
+// JOGADA
 // ======================================================
 
 async function executarJogada(
@@ -568,6 +778,7 @@ async function executarJogada(
     if (!roomCode) {
         enviar(ws, {
             type: "INVALID_MOVE",
+
             message:
                 "Você não está em uma sala."
         });
@@ -632,6 +843,7 @@ async function executarJogada(
     ) {
         enviar(ws, {
             type: "INVALID_MOVE",
+
             message:
                 "Posição inválida."
         });
@@ -659,13 +871,14 @@ async function executarJogada(
     sala.board[position] =
         simboloJogador;
 
-    // SALVA A JOGADA
     try {
-
         await registrarJogada(
             sala.idPartida,
+
             ws.playerId,
+
             position,
+
             simboloJogador
         );
 
@@ -675,9 +888,7 @@ async function executarJogada(
         );
 
     } catch (erro) {
-
-        sala.board[position] =
-            "";
+        sala.board[position] = "";
 
         iniciarCronometroTurno(
             sala
@@ -703,9 +914,11 @@ async function executarJogada(
             sala.board
         );
 
+    // ==================================================
     // VITÓRIA
-    if (vencedor) {
+    // ==================================================
 
+    if (vencedor) {
         sala.status =
             "FINISHED";
 
@@ -719,13 +932,15 @@ async function executarJogada(
         const jogadorVencedor =
             sala.players.find(
                 (player) =>
-                    player.symbol === vencedor
+                    player.symbol ===
+                    vencedor
             );
 
         const jogadorPerdedor =
             sala.players.find(
                 (player) =>
-                    player !== jogadorVencedor
+                    player !==
+                    jogadorVencedor
             );
 
         if (jogadorVencedor) {
@@ -743,13 +958,10 @@ async function executarJogada(
         const statusResultado =
             jogadorVencedor ===
                 sala.players[0]
-
                 ? "VITORIA_HOST"
-
                 : "VITORIA_VISITANTE";
 
         try {
-
             await atualizarStatusSala(
                 sala.idSala,
                 "FINALIZADA"
@@ -769,11 +981,11 @@ async function executarJogada(
 
             await registrarVitoriaDerrota(
                 jogadorVencedor.idJogador,
+
                 jogadorPerdedor.idJogador
             );
 
         } catch (erro) {
-
             console.error(
                 "Erro ao finalizar partida no banco:",
                 erro
@@ -793,15 +1005,14 @@ async function executarJogada(
         enviarParaSala(sala, {
             type: "GAME_OVER",
 
-            result: "WIN",
+            result:
+                "WIN",
 
             winner:
                 vencedor,
 
             winnerName:
-                jogadorVencedor
-                    ? jogadorVencedor.name
-                    : ws.playerName,
+                jogadorVencedor.name,
 
             score:
                 obterPlacar(sala)
@@ -823,13 +1034,15 @@ async function executarJogada(
         return;
     }
 
+    // ==================================================
     // EMPATE
+    // ==================================================
+
     if (
         verificarEmpate(
             sala.board
         )
     ) {
-
         sala.status =
             "FINISHED";
 
@@ -849,7 +1062,6 @@ async function executarJogada(
             );
 
         try {
-
             await atualizarStatusSala(
                 sala.idSala,
                 "FINALIZADA"
@@ -868,7 +1080,6 @@ async function executarJogada(
             );
 
         } catch (erro) {
-
             console.error(
                 "Erro ao registrar empate no banco:",
                 erro
@@ -915,21 +1126,23 @@ async function executarJogada(
         return;
     }
 
+    // ==================================================
     // TROCA DE TURNO
+    // ==================================================
+
     sala.currentTurn =
         simboloJogador === "X"
             ? "O"
             : "X";
 
     try {
-
         await atualizarTurnoPartida(
             sala.idPartida,
+
             sala.currentTurn
         );
 
     } catch (erro) {
-
         console.error(
             "Erro ao atualizar turno da partida:",
             erro.message
@@ -947,8 +1160,7 @@ async function executarJogada(
     });
 
     console.log(
-        `Próximo turno: ` +
-        `${sala.currentTurn}`
+        `Próximo turno: ${sala.currentTurn}`
     );
 
     iniciarCronometroTurno(
@@ -968,7 +1180,6 @@ async function enviarMensagemChat(
         ws.roomCode;
 
     if (!roomCode) {
-
         enviar(ws, {
             type: "CHAT_ERROR",
 
@@ -983,7 +1194,6 @@ async function enviarMensagemChat(
         rooms.get(roomCode);
 
     if (!sala) {
-
         enviar(ws, {
             type: "CHAT_ERROR",
 
@@ -1000,7 +1210,6 @@ async function enviarMensagemChat(
         ).trim();
 
     if (!texto) {
-
         enviar(ws, {
             type: "CHAT_ERROR",
 
@@ -1011,17 +1220,16 @@ async function enviarMensagemChat(
         return;
     }
 
-    // SALVA CHAT
     try {
-
         await registrarMensagemChat(
             sala.idSala,
+
             ws.playerId,
+
             texto
         );
 
     } catch (erro) {
-
         console.error(
             "Erro ao registrar mensagem no banco:",
             erro
@@ -1060,14 +1268,11 @@ async function enviarMensagemChat(
 // REVANCHE
 // ======================================================
 
-async function solicitarRevanche(
-    ws
-) {
+async function solicitarRevanche(ws) {
     const roomCode =
         ws.roomCode;
 
     if (!roomCode) {
-
         enviar(ws, {
             type: "NEW_GAME_ERROR",
 
@@ -1082,7 +1287,6 @@ async function solicitarRevanche(
         rooms.get(roomCode);
 
     if (!sala) {
-
         enviar(ws, {
             type: "NEW_GAME_ERROR",
 
@@ -1097,7 +1301,6 @@ async function solicitarRevanche(
         sala.status !==
         "FINISHED"
     ) {
-
         enviar(ws, {
             type: "NEW_GAME_ERROR",
 
@@ -1111,7 +1314,6 @@ async function solicitarRevanche(
     if (
         sala.rematchRequests.has(ws)
     ) {
-
         enviar(ws, {
             type: "NEW_GAME_ERROR",
 
@@ -1122,9 +1324,7 @@ async function solicitarRevanche(
         return;
     }
 
-    sala.rematchRequests.add(
-        ws
-    );
+    sala.rematchRequests.add(ws);
 
     console.log(
         `${ws.playerName} solicitou revanche ` +
@@ -1134,10 +1334,8 @@ async function solicitarRevanche(
     if (
         sala.rematchRequests.size === 1
     ) {
-
         enviarParaSala(sala, {
-            type:
-                "REMATCH_REQUESTED",
+            type: "REMATCH_REQUESTED",
 
             requestedBy:
                 ws.playerName,
@@ -1152,7 +1350,6 @@ async function solicitarRevanche(
     if (
         sala.rematchRequests.size === 2
     ) {
-
         await iniciarNovaPartida(
             sala
         );
@@ -1176,14 +1373,12 @@ async function iniciarNovaPartida(
         const player
         of sala.players
     ) {
-
         player.symbol =
             player.symbol === "X"
                 ? "O"
                 : "X";
 
         if (player.socket) {
-
             player.socket.playerSymbol =
                 player.symbol;
         }
@@ -1198,7 +1393,6 @@ async function iniciarNovaPartida(
     sala.rematchRequests.clear();
 
     try {
-
         await atualizarStatusSala(
             sala.idSala,
             "EM_JOGO"
@@ -1228,15 +1422,13 @@ async function iniciarNovaPartida(
         );
 
     } catch (erro) {
-
         console.error(
             "Erro ao criar revanche no banco:",
             erro
         );
 
         enviarParaSala(sala, {
-            type:
-                "DATABASE_ERROR",
+            type: "DATABASE_ERROR",
 
             message:
                 "Não foi possível criar a nova partida."
@@ -1246,8 +1438,7 @@ async function iniciarNovaPartida(
     }
 
     enviarParaSala(sala, {
-        type:
-            "NEW_GAME_STARTED",
+        type: "NEW_GAME_STARTED",
 
         roomCode:
             sala.code,
@@ -1286,14 +1477,11 @@ async function iniciarNovaPartida(
 // DESCONEXÃO
 // ======================================================
 
-async function tratarDesconexao(
-    ws
-) {
+async function tratarDesconexao(ws) {
     const roomCode =
         ws.roomCode;
 
     if (!roomCode) {
-
         console.log(
             "Cliente desconectado antes de entrar em uma sala."
         );
@@ -1332,17 +1520,19 @@ async function tratarDesconexao(
         `da sala ${roomCode}`
     );
 
+    // ==================================================
+    // SALA AINDA AGUARDANDO
+    // ==================================================
+
     if (
         sala.status ===
         "WAITING"
     ) {
-
         rooms.delete(
             roomCode
         );
 
         try {
-
             await removerSalaBanco(
                 sala.idSala
             );
@@ -1352,12 +1542,15 @@ async function tratarDesconexao(
             );
 
         } catch (erro) {
-
             console.error(
                 "Erro ao remover sala do banco:",
                 erro.message
             );
         }
+
+        // Caso fosse uma sala pública,
+        // ela deve desaparecer do lobby.
+        broadcastListaSalasPublicas();
 
         return;
     }
@@ -1374,8 +1567,7 @@ async function tratarDesconexao(
     );
 
     enviarParaSala(sala, {
-        type:
-            "PLAYER_DISCONNECTED",
+        type: "PLAYER_DISCONNECTED",
 
         playerName:
             jogador.name,
@@ -1393,12 +1585,10 @@ async function tratarDesconexao(
 
     jogador.disconnectTimer =
         setTimeout(() => {
-
             finalizarPorWO(
                 sala,
                 jogador
             ).catch((erro) => {
-
                 console.error(
                     "Erro ao finalizar por W.O.:",
                     erro
@@ -1420,7 +1610,6 @@ function reconectarJogador(
     if (
         jogador.disconnectTimer
     ) {
-
         clearTimeout(
             jogador.disconnectTimer
         );
@@ -1448,8 +1637,7 @@ function reconectarJogador(
         jogador.idJogador;
 
     enviar(ws, {
-        type:
-            "ROOM_RECONNECTED",
+        type: "ROOM_RECONNECTED",
 
         roomCode:
             sala.code,
@@ -1488,8 +1676,7 @@ function reconectarJogador(
     });
 
     enviarParaSala(sala, {
-        type:
-            "PLAYER_RECONNECTED",
+        type: "PLAYER_RECONNECTED",
 
         playerName:
             jogador.name,
@@ -1510,7 +1697,6 @@ function reconectarJogador(
         sala.status ===
         "PLAYING"
     ) {
-
         iniciarCronometroTurno(
             sala
         );
@@ -1562,7 +1748,6 @@ async function finalizarPorWO(
     sala.rematchRequests.clear();
 
     if (!vencedor) {
-
         console.log(
             `Partida da sala ${sala.code} ` +
             `encerrada sem vencedor.`
@@ -1584,13 +1769,10 @@ async function finalizarPorWO(
     const statusResultado =
         vencedor ===
             sala.players[0]
-
             ? "VITORIA_HOST"
-
             : "VITORIA_VISITANTE";
 
     try {
-
         await atualizarStatusSala(
             sala.idSala,
             "FINALIZADA"
@@ -1610,11 +1792,11 @@ async function finalizarPorWO(
 
         await registrarVitoriaDerrota(
             vencedor.idJogador,
+
             jogadorDesconectado.idJogador
         );
 
     } catch (erro) {
-
         console.error(
             "Erro ao registrar W.O. no banco:",
             erro
@@ -1622,8 +1804,7 @@ async function finalizarPorWO(
     }
 
     enviarParaSala(sala, {
-        type:
-            "GAME_OVER",
+        type: "GAME_OVER",
 
         result:
             "WO",
@@ -1642,8 +1823,7 @@ async function finalizarPorWO(
     });
 
     enviarParaSala(sala, {
-        type:
-            "SCORE_UPDATE",
+        type: "SCORE_UPDATE",
 
         score:
             obterPlacar(sala)
@@ -1662,11 +1842,9 @@ async function finalizarPorWO(
 
 inicializarBanco()
     .then(() => {
-
         server.listen(
             PORT,
             () => {
-
                 console.log(
                     `Servidor rodando em http://localhost:${PORT}`
                 );
@@ -1678,7 +1856,6 @@ inicializarBanco()
         );
     })
     .catch((erro) => {
-
         console.error(
             "Não foi possível iniciar o banco:",
             erro
