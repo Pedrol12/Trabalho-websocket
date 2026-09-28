@@ -105,3 +105,125 @@ button:focus-visible { outline: 3px solid #0e7c86; outline-offset: 2px; }
   font-weight: bold;
   text-align: center;
 }
+
+/* ---------- Arena ---------- */
+#tela-arena {
+  background: #fff;
+  border: 2px solid #17232f;
+  border-radius: 10px;
+  padding: 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.jogadores {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.jogador {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: bold;
+}
+
+.simbolo { font-size: 1.8rem; font-weight: 900; }
+.simbolo.x, .celula.x { color: #d23f2e; }
+.simbolo.o, .celula.o { color: #0e7c86; }
+
+#indicador-turno {
+  margin: 0;
+  text-align: center;
+  font-weight: bold;
+  color: #5b6b7a;
+}
+#indicador-turno.minha-vez { color: #17232f; }
+
+/* tabuleiro 3x3 */
+#tabuleiro {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  width: 100%;
+  max-width: 360px;
+  margin: 0 auto;
+}
+
+/* casas sem borda propria, as linhas do jogo vem abaixo */
+.celula {
+  aspect-ratio: 1;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: clamp(2.4rem, 14vw, 4rem);
+  font-weight: 900;
+}
+.celula:hover { background: #e8edf2; }
+
+/* linhas verticais (todas menos a ultima coluna) */
+.celula:not(:nth-child(3n)) { border-right: 4px solid #17232f; }
+
+/* linhas horizontais (todas menos a ultima linha) */
+.celula:nth-child(-n+6) { border-bottom: 4px solid #17232f; }
+
+.tremer { animation: tremer 0.3s; }
+@keyframes tremer {
+  25% { transform: translateX(-6px); }
+  75% { transform: translateX(6px); }
+}
+
+#msg-arena {
+  min-height: 1.4em;
+  margin: 0;
+  color: #b3261e;
+  font-weight: bold;
+  text-align: center;
+}
+
+#info-sala {
+  margin: 0;
+  text-align: center;
+  color: #5b6b7a;
+  font-size: 0.9rem;
+}
+
+/* ---------- Game Over ---------- */
+#modal-fim {
+  position: fixed;
+  inset: 0;
+  background: rgba(23, 35, 47, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.modal-caixa {
+  background: #fff;
+  border: 2px solid #17232f;
+  border-radius: 10px;
+  padding: 32px 28px;
+  width: 100%;
+  max-width: 380px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+#fim-revanche {
+  min-height: 1.4em;
+  color: #17232f;
+  font-weight: bold;
+}
+
+#btn-jogar-novamente {
+  background: #17232f;
+  color: #fff;
+}
+
+.modal-caixa h2 { margin: 0; font-size: 2rem; }
+.modal-caixa p { margin: 0; color: #5b6b7a; }

@@ -35,6 +35,46 @@
         <button id="btn-entrar" type="button">Entrar por código</button>
       </div>
     </section>
+
+    <section id="tela-arena" hidden>
+      <div class="jogadores">
+        <div class="jogador">
+          <span class="simbolo x">X</span>
+          <span id="nome-x">-</span>
+        </div>
+        <div class="jogador">
+          <span class="simbolo o">O</span>
+          <span id="nome-o">-</span>
+        </div>
+      </div>
+
+      <p id="indicador-turno">Aguardando...</p>
+
+      <div id="tabuleiro">
+        <button type="button" class="celula" data-pos="0"></button>
+        <button type="button" class="celula" data-pos="1"></button>
+        <button type="button" class="celula" data-pos="2"></button>
+        <button type="button" class="celula" data-pos="3"></button>
+        <button type="button" class="celula" data-pos="4"></button>
+        <button type="button" class="celula" data-pos="5"></button>
+        <button type="button" class="celula" data-pos="6"></button>
+        <button type="button" class="celula" data-pos="7"></button>
+        <button type="button" class="celula" data-pos="8"></button>
+      </div>
+
+      <p id="msg-arena"></p>
+      <p id="info-sala">Sala <strong id="arena-codigo"></strong> · você joga com <strong id="arena-simbolo"></strong></p>
+    </section>
+
+        <div id="modal-fim" hidden>
+      <div class="modal-caixa">
+        <h2 id="fim-titulo"></h2>
+        <p id="fim-detalhe"></p>
+        <p id="fim-revanche"></p>
+        <button id="btn-jogar-novamente" type="button">Jogar de novo</button>
+        <button id="btn-voltar" type="button">Voltar ao lobby</button>
+      </div>
+    </div>
   </main>
 
   <script src="js/websocket.js"></script>
