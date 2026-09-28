@@ -113,6 +113,10 @@ wss.on("connection", (ws) => {
                     executarJogada(ws, mensagem);
                     break;
 
+                case "CHAT":
+                    enviarMensagemChat(ws, mensagem);
+                    break;
+
                 default:
                     enviar(ws, {
                         type: "ERROR",
@@ -312,14 +316,12 @@ function executarJogada(ws, mensagem) {
         sala.status = "FINISHED";
         sala.currentTurn = null;
 
-        // Atualiza o tabuleiro final
         enviarParaSala(sala, {
             type: "BOARD_UPDATE",
             board: sala.board,
             nextTurn: null
         });
 
-        // Informa o fim da partida
         enviarParaSala(sala, {
             type: "GAME_OVER",
             result: "WIN",
@@ -339,14 +341,12 @@ function executarJogada(ws, mensagem) {
         sala.status = "FINISHED";
         sala.currentTurn = null;
 
-        // Atualiza o tabuleiro final
         enviarParaSala(sala, {
             type: "BOARD_UPDATE",
             board: sala.board,
             nextTurn: null
         });
 
-        // Informa o empate
         enviarParaSala(sala, {
             type: "GAME_OVER",
             result: "DRAW",
@@ -362,7 +362,6 @@ function executarJogada(ws, mensagem) {
     // Se a partida continua, alterna o turno
     sala.currentTurn = simboloJogador === "X" ? "O" : "X";
 
-    // Atualiza o tabuleiro para os dois jogadores
     enviarParaSala(sala, {
         type: "BOARD_UPDATE",
         board: sala.board,
@@ -371,6 +370,57 @@ function executarJogada(ws, mensagem) {
 
     console.log(
         `Próximo turno: ${sala.currentTurn}`
+    );
+}
+
+// Processa mensagens do chat
+function enviarMensagemChat(ws, mensagem) {
+    const roomCode = ws.roomCode;
+
+    // Jogador precisa estar em uma sala
+    if (!roomCode) {
+        enviar(ws, {
+            type: "CHAT_ERROR",
+            message: "Você não está em uma sala."
+        });
+
+        return;
+    }
+
+    const sala = rooms.get(roomCode);
+
+    if (!sala) {
+        enviar(ws, {
+            type: "CHAT_ERROR",
+            message: "Sala não encontrada."
+        });
+
+        return;
+    }
+
+    // Confere e limpa o texto da mensagem
+    const texto = String(mensagem.message || "").trim();
+
+    // Não permite mensagem vazia
+    if (!texto) {
+        enviar(ws, {
+            type: "CHAT_ERROR",
+            message: "A mensagem não pode estar vazia."
+        });
+
+        return;
+    }
+
+    // Envia somente para os jogadores daquela sala
+    enviarParaSala(sala, {
+        type: "CHAT_MESSAGE",
+        playerName: ws.playerName,
+        playerSymbol: ws.playerSymbol,
+        message: texto
+    });
+
+    console.log(
+        `[CHAT ${roomCode}] ${ws.playerName}: ${texto}`
     );
 }
 
