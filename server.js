@@ -1,22 +1,44 @@
 const express = require("express");
 const http = require("http");
+const bcrypt = require("bcryptjs");
+const session = require("express-session");
 const { WebSocketServer, WebSocket } = require("ws");
 
 const {
     inicializarBanco,
+
     buscarOuCriarJogador,
     registrarVitoriaDerrota,
+
+    criarJogadorAutenticado,
+    buscarJogadorPorEmail,
+    buscarJogadorPorId,
+    buscarJogadorPorNickname,
+    atualizarCredenciaisJogador,
+
     codigoSalaExiste,
     criarSalaBanco,
     adicionarVisitanteSala,
     atualizarStatusSala,
     removerSalaBanco,
+
+    listarSalasBanco,
+    listarSalasPublicasBanco,
+    listarSalasPrivadasBanco,
+    buscarSalaPorCodigoBanco,
+    listarSalasAguardandoBanco,
+
     criarPartida,
     atualizarTurnoPartida,
     finalizarPartida,
+
     registrarJogada,
     registrarMensagemChat
 } = require("./database/database");
+
+// ======================================================
+// CONFIGURAÇÃO
+// ======================================================
 
 const app = express();
 app.use(express.static("public"));
@@ -24,107 +46,1260 @@ app.use(express.static("public"));
 const PORT = 3000;
 
 const TEMPO_TURNO_MS = 15000;
+
 const TEMPO_RECONEXAO_MS = 30000;
 
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+// Permite receber JSON nos POSTs
+app.use(
+    express.json()
+);
 
-const rooms = new Map();
-
-app.get("/", (req, res) => {
-    res.send("Servidor do Jogo da Velha funcionando!");
-});
+// Permite receber formulários HTML
+app.use(
+    express.urlencoded({
+        extended: false
+    })
+);
 
 // ======================================================
-// FUNÇÕES AUXILIARES
+// SESSÃO / LOGIN
+// ======================================================
+
+app.use(
+    session({
+        secret:
+            process.env.SESSION_SECRET ||
+            "jogo-da-velha-segredo-dev",
+
+        resave:
+            false,
+
+        saveUninitialized:
+            false,
+
+        cookie: {
+            httpOnly:
+                true,
+
+            sameSite:
+                "lax",
+
+            secure:
+                false,
+
+            maxAge:
+                1000 * 60 * 60 * 8
+        }
+    })
+);
+
+// Arquivos HTML/CSS/JS do frontend
+app.use(
+    express.static("public")
+);
+
+// ======================================================
+// HTTP + WEBSOCKET
+// ======================================================
+
+const server =
+    http.createServer(app);
+
+const wss =
+    new WebSocketServer({
+        server
+    });
+
+// Salas atualmente carregadas em memória
+const rooms =
+    new Map();
+
+// ======================================================
+// ROTAS BÁSICAS
+// ======================================================
+
+app.get(
+    "/",
+    (req, res) => {
+
+        res.send(
+            "Servidor do Jogo da Velha funcionando!"
+        );
+    }
+);
+
+app.get(
+    "/api/status",
+    (req, res) => {
+
+        res.json({
+            sucesso:
+                true,
+
+            servidor:
+                "Jogo da Velha WebSocket + HTTP",
+
+            websocket:
+                `ws://localhost:${PORT}`
+        });
+    }
+);
+
+// ======================================================
+// AUTENTICAÇÃO
+// ======================================================
+
+function exigirAutenticacao(
+    req,
+    res,
+    next
+) {
+
+    if (
+        !req.session.usuario
+    ) {
+
+        return res
+            .status(401)
+            .json({
+                sucesso:
+                    false,
+
+                erro:
+                    "Usuário não autenticado."
+            });
+    }
+
+    next();
+}
+
+// Nunca envia senha_hash para o navegador
+function usuarioSeguro(
+    jogador
+) {
+
+    return {
+        idJogador:
+            jogador.id_jogador,
+
+        nickname:
+            jogador.nickname,
+
+        email:
+            jogador.email,
+
+        vitoriasTotais:
+            jogador.vitorias_totais || 0,
+
+        derrotasTotais:
+            jogador.derrotas_totais || 0
+    };
+}
+
+// ======================================================
+// POST - CADASTRO
+// ======================================================
+
+app.post(
+    "/api/auth/register",
+    async (req, res) => {
+
+        try {
+
+            const nickname =
+                String(
+                    req.body.nickname || ""
+                ).trim();
+
+            const email =
+                String(
+                    req.body.email || ""
+                )
+                    .trim()
+                    .toLowerCase();
+
+            const senha =
+                String(
+                    req.body.senha || ""
+                );
+
+            // ==========================================
+            // VALIDAÇÕES
+            // ==========================================
+
+            if (
+                nickname.length < 2
+            ) {
+
+                return res
+                    .status(400)
+                    .json({
+                        sucesso:
+                            false,
+
+                        erro:
+                            "O nickname precisa ter pelo menos 2 caracteres."
+                    });
+            }
+
+            if (
+                !email ||
+                !email.includes("@")
+            ) {
+
+                return res
+                    .status(400)
+                    .json({
+                        sucesso:
+                            false,
+
+                        erro:
+                            "Informe um e-mail válido."
+                    });
+            }
+
+            if (
+                senha.length < 6
+            ) {
+
+                return res
+                    .status(400)
+                    .json({
+                        sucesso:
+                            false,
+
+                        erro:
+                            "A senha precisa ter pelo menos 6 caracteres."
+                    });
+            }
+
+            // ==========================================
+            // EMAIL DUPLICADO
+            // ==========================================
+
+            const jogadorComEmail =
+                await buscarJogadorPorEmail(
+                    email
+                );
+
+            if (
+                jogadorComEmail
+            ) {
+
+                return res
+                    .status(409)
+                    .json({
+                        sucesso:
+                            false,
+
+                        erro:
+                            "Já existe uma conta com esse e-mail."
+                    });
+            }
+
+            // ==========================================
+            // NICKNAME EXISTENTE
+            // ==========================================
+
+            const jogadorComNickname =
+                await buscarJogadorPorNickname(
+                    nickname
+                );
+
+            // Criptografa a senha
+            const senhaHash =
+                await bcrypt.hash(
+                    senha,
+                    10
+                );
+
+            let jogador;
+
+            // Se o jogador existia dos testes antigos,
+            // mas ainda não tinha login,
+            // transforma ele em conta autenticada.
+            if (
+                jogadorComNickname &&
+                !jogadorComNickname.email &&
+                !jogadorComNickname.senha_hash
+            ) {
+
+                await atualizarCredenciaisJogador(
+                    jogadorComNickname.id_jogador,
+                    email,
+                    senhaHash
+                );
+
+                jogador =
+                    await buscarJogadorPorId(
+                        jogadorComNickname.id_jogador
+                    );
+
+            } else if (
+                jogadorComNickname
+            ) {
+
+                return res
+                    .status(409)
+                    .json({
+                        sucesso:
+                            false,
+
+                        erro:
+                            "Esse nickname já está sendo utilizado."
+                    });
+
+            } else {
+
+                jogador =
+                    await criarJogadorAutenticado(
+                        nickname,
+                        email,
+                        senhaHash
+                    );
+            }
+
+            // ==========================================
+            // CRIA SESSÃO
+            // ==========================================
+
+            req.session.usuario =
+                usuarioSeguro(
+                    jogador
+                );
+
+            return res
+                .status(201)
+                .json({
+                    sucesso:
+                        true,
+
+                    mensagem:
+                        "Conta criada com sucesso.",
+
+                    usuario:
+                        req.session.usuario
+                });
+
+        } catch (erro) {
+
+            console.error(
+                "Erro no cadastro:",
+                erro
+            );
+
+            return res
+                .status(500)
+                .json({
+                    sucesso:
+                        false,
+
+                    erro:
+                        "Não foi possível criar a conta."
+                });
+        }
+    }
+);
+
+// ======================================================
+// POST - LOGIN
+// ======================================================
+
+app.post(
+    "/api/auth/login",
+    async (req, res) => {
+
+        try {
+
+            const email =
+                String(
+                    req.body.email || ""
+                )
+                    .trim()
+                    .toLowerCase();
+
+            const senha =
+                String(
+                    req.body.senha || ""
+                );
+
+            if (
+                !email ||
+                !senha
+            ) {
+
+                return res
+                    .status(400)
+                    .json({
+                        sucesso:
+                            false,
+
+                        erro:
+                            "E-mail e senha são obrigatórios."
+                    });
+            }
+
+            const jogador =
+                await buscarJogadorPorEmail(
+                    email
+                );
+
+            if (
+                !jogador ||
+                !jogador.senha_hash
+            ) {
+
+                return res
+                    .status(401)
+                    .json({
+                        sucesso:
+                            false,
+
+                        erro:
+                            "E-mail ou senha inválidos."
+                    });
+            }
+
+            const senhaCorreta =
+                await bcrypt.compare(
+                    senha,
+                    jogador.senha_hash
+                );
+
+            if (
+                !senhaCorreta
+            ) {
+
+                return res
+                    .status(401)
+                    .json({
+                        sucesso:
+                            false,
+
+                        erro:
+                            "E-mail ou senha inválidos."
+                    });
+            }
+
+            req.session.usuario =
+                usuarioSeguro(
+                    jogador
+                );
+
+            return res.json({
+                sucesso:
+                    true,
+
+                mensagem:
+                    "Login realizado com sucesso.",
+
+                usuario:
+                    req.session.usuario
+            });
+
+        } catch (erro) {
+
+            console.error(
+                "Erro no login:",
+                erro
+            );
+
+            return res
+                .status(500)
+                .json({
+                    sucesso:
+                        false,
+
+                    erro:
+                        "Não foi possível realizar o login."
+                });
+        }
+    }
+);
+
+// ======================================================
+// GET - USUÁRIO LOGADO
+// ======================================================
+
+app.get(
+    "/api/auth/me",
+
+    exigirAutenticacao,
+
+    async (req, res) => {
+
+        try {
+
+            const jogador =
+                await buscarJogadorPorId(
+                    req.session.usuario.idJogador
+                );
+
+            if (
+                !jogador
+            ) {
+
+                return res
+                    .status(404)
+                    .json({
+                        sucesso:
+                            false,
+
+                        erro:
+                            "Usuário não encontrado."
+                    });
+            }
+
+            req.session.usuario =
+                usuarioSeguro(
+                    jogador
+                );
+
+            return res.json({
+                sucesso:
+                    true,
+
+                autenticado:
+                    true,
+
+                usuario:
+                    req.session.usuario
+            });
+
+        } catch (erro) {
+
+            console.error(
+                "Erro ao consultar sessão:",
+                erro
+            );
+
+            return res
+                .status(500)
+                .json({
+                    sucesso:
+                        false,
+
+                    erro:
+                        "Não foi possível consultar a sessão."
+                });
+        }
+    }
+);
+
+// ======================================================
+// POST - LOGOUT
+// ======================================================
+
+app.post(
+    "/api/auth/logout",
+    (req, res) => {
+
+        req.session.destroy(
+            (erro) => {
+
+                if (
+                    erro
+                ) {
+
+                    console.error(
+                        "Erro no logout:",
+                        erro
+                    );
+
+                    return res
+                        .status(500)
+                        .json({
+                            sucesso:
+                                false,
+
+                            erro:
+                                "Não foi possível encerrar a sessão."
+                        });
+                }
+
+                res.clearCookie(
+                    "connect.sid"
+                );
+
+                return res.json({
+                    sucesso:
+                        true,
+
+                    mensagem:
+                        "Logout realizado com sucesso."
+                });
+            }
+        );
+    }
+);
+
+// ======================================================
+// FUNÇÕES AUXILIARES DE SALA
 // ======================================================
 
 function gerarCodigoSala() {
+
     const caracteres =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-    let codigo = "";
+    let codigo =
+        "";
 
-    for (let i = 0; i < 6; i++) {
+    for (
+        let i = 0;
+        i < 6;
+        i++
+    ) {
+
         const indice =
             Math.floor(
-                Math.random() * caracteres.length
+                Math.random() *
+                caracteres.length
             );
 
-        codigo += caracteres[indice];
+        codigo +=
+            caracteres[indice];
     }
 
     return codigo;
 }
 
-function enviar(ws, dados) {
+// Cria a estrutura usada pelo WebSocket
+function criarEstruturaSala({
+    idSala,
+    roomCode,
+    privada,
+    hostId = null,
+    hostName = null
+}) {
+
+    return {
+        idSala,
+
+        idPartida:
+            null,
+
+        code:
+            roomCode,
+
+        private:
+            Boolean(
+                privada
+            ),
+
+        hostId,
+
+        hostName,
+
+        players:
+            [],
+
+        board: [
+            "", "", "",
+            "", "", "",
+            "", "", ""
+        ],
+
+        currentTurn:
+            "X",
+
+        status:
+            "WAITING",
+
+        rematchRequests:
+            new Set(),
+
+        turnTimer:
+            null,
+
+        turnDeadline:
+            null
+    };
+}
+
+// Converte uma sala que veio do SQLite
+// para o formato usado em memória.
+function salaBancoParaMemoria(
+    salaBanco
+) {
+
+    return criarEstruturaSala({
+        idSala:
+            salaBanco.id_sala,
+
+        roomCode:
+            salaBanco.codigo_sala,
+
+        privada:
+            Number(
+                salaBanco.privada
+            ) === 1,
+
+        hostId:
+            salaBanco.id_jogador_host,
+
+        hostName:
+            salaBanco.host_nickname ||
+            null
+    });
+}
+
+// ======================================================
+// RECUPERA SALAS PRIVADAS APÓS REINICIAR NODE
+// ======================================================
+
+async function recuperarSalasPrivadasPersistidas() {
+
+    const salas =
+        await listarSalasAguardandoBanco();
+
+    let recuperadas =
+        0;
+
+    for (
+        const salaBanco
+        of salas
+    ) {
+
+        // Só queremos recuperação automática
+        // de sala privada.
+        if (
+            Number(
+                salaBanco.privada
+            ) !== 1
+        ) {
+
+            continue;
+        }
+
+        if (
+            !rooms.has(
+                salaBanco.codigo_sala
+            )
+        ) {
+
+            rooms.set(
+                salaBanco.codigo_sala,
+
+                salaBancoParaMemoria(
+                    salaBanco
+                )
+            );
+
+            recuperadas++;
+        }
+    }
+
+    console.log(
+        `Salas privadas persistidas recuperadas: ${recuperadas}`
+    );
+}
+
+// Se a sala não estiver na memória,
+// tenta buscar no SQLite.
+async function buscarOuRecuperarSala(
+    roomCode
+) {
+
+    let sala =
+        rooms.get(
+            roomCode
+        );
+
+    if (
+        sala
+    ) {
+
+        return sala;
+    }
+
+    const salaBanco =
+        await buscarSalaPorCodigoBanco(
+            roomCode
+        );
+
+    if (
+        !salaBanco
+    ) {
+
+        return null;
+    }
+
+    // Não tentamos restaurar jogo em andamento
+    // sem o estado do tabuleiro.
+    if (
+        salaBanco.status_sala !==
+        "AGUARDANDO"
+    ) {
+
+        return null;
+    }
+
+    sala =
+        salaBancoParaMemoria(
+            salaBanco
+        );
+
+    rooms.set(
+        roomCode,
+        sala
+    );
+
+    return sala;
+}
+
+// ======================================================
+// HTTP - POST SALA PRIVADA
+// ======================================================
+
+app.post(
+    "/api/salas/privadas",
+
+    exigirAutenticacao,
+
+    async (req, res) => {
+
+        try {
+
+            let roomCode;
+
+            let codigoJaExiste;
+
+            do {
+
+                roomCode =
+                    gerarCodigoSala();
+
+                codigoJaExiste =
+                    rooms.has(
+                        roomCode
+                    ) ||
+                    await codigoSalaExiste(
+                        roomCode
+                    );
+
+            } while (
+                codigoJaExiste
+            );
+
+            const usuario =
+                req.session.usuario;
+
+            // ==========================================
+            // SALVA NO SQLITE
+            // ==========================================
+
+            const idSala =
+                await criarSalaBanco(
+                    roomCode,
+
+                    usuario.idJogador,
+
+                    true
+                );
+
+            // ==========================================
+            // COLOCA NA MEMÓRIA
+            // ==========================================
+
+            const sala =
+                criarEstruturaSala({
+                    idSala,
+
+                    roomCode,
+
+                    privada:
+                        true,
+
+                    hostId:
+                        usuario.idJogador,
+
+                    hostName:
+                        usuario.nickname
+                });
+
+            rooms.set(
+                roomCode,
+                sala
+            );
+
+            console.log(
+                `Sala privada ${roomCode} criada via HTTP ` +
+                `e salva no SQLite.`
+            );
+
+            return res
+                .status(201)
+                .json({
+                    sucesso:
+                        true,
+
+                    mensagem:
+                        "Sala privada criada e persistida com sucesso.",
+
+                    sala: {
+                        idSala,
+
+                        roomCode,
+
+                        private:
+                            true,
+
+                        status:
+                            "WAITING",
+
+                        host: {
+                            idJogador:
+                                usuario.idJogador,
+
+                            nickname:
+                                usuario.nickname
+                        }
+                    }
+                });
+
+        } catch (erro) {
+
+            console.error(
+                "Erro ao criar sala privada via HTTP:",
+                erro
+            );
+
+            return res
+                .status(500)
+                .json({
+                    sucesso:
+                        false,
+
+                    erro:
+                        "Não foi possível criar a sala privada."
+                });
+        }
+    }
+);
+
+// ======================================================
+// GET - SALAS PÚBLICAS
+// ======================================================
+
+app.get(
+    "/api/salas/publicas",
+
+    async (req, res) => {
+
+        try {
+
+            const salas =
+                await listarSalasPublicasBanco();
+
+            return res.json({
+                total:
+                    salas.length,
+
+                salas
+            });
+
+        } catch (erro) {
+
+            console.error(
+                "Erro ao listar salas públicas:",
+                erro
+            );
+
+            return res
+                .status(500)
+                .json({
+                    sucesso:
+                        false,
+
+                    erro:
+                        "Não foi possível consultar as salas públicas."
+                });
+        }
+    }
+);
+
+// ======================================================
+// GET - TODAS AS SALAS
+// ======================================================
+
+app.get(
+    "/api/salas",
+
+    exigirAutenticacao,
+
+    async (req, res) => {
+
+        try {
+
+            const salas =
+                await listarSalasBanco();
+
+            return res.json({
+                total:
+                    salas.length,
+
+                salas
+            });
+
+        } catch (erro) {
+
+            console.error(
+                "Erro ao listar salas:",
+                erro
+            );
+
+            return res
+                .status(500)
+                .json({
+                    sucesso:
+                        false,
+
+                    erro:
+                        "Não foi possível consultar as salas."
+                });
+        }
+    }
+);
+
+// ======================================================
+// GET - SALAS PRIVADAS
+// ======================================================
+
+app.get(
+    "/api/salas/privadas",
+
+    exigirAutenticacao,
+
+    async (req, res) => {
+
+        try {
+
+            const salas =
+                await listarSalasPrivadasBanco();
+
+            return res.json({
+                total:
+                    salas.length,
+
+                salas
+            });
+
+        } catch (erro) {
+
+            console.error(
+                "Erro ao listar salas privadas:",
+                erro
+            );
+
+            return res
+                .status(500)
+                .json({
+                    sucesso:
+                        false,
+
+                    erro:
+                        "Não foi possível consultar as salas privadas."
+                });
+        }
+    }
+);
+
+// ======================================================
+// GET - SALA PELO CÓDIGO
+// ======================================================
+
+app.get(
+    "/api/salas/:codigo",
+
+    exigirAutenticacao,
+
+    async (req, res) => {
+
+        try {
+
+            const codigo =
+                String(
+                    req.params.codigo || ""
+                )
+                    .trim()
+                    .toUpperCase();
+
+            const sala =
+                await buscarSalaPorCodigoBanco(
+                    codigo
+                );
+
+            if (
+                !sala
+            ) {
+
+                return res
+                    .status(404)
+                    .json({
+                        sucesso:
+                            false,
+
+                        erro:
+                            "Sala não encontrada."
+                    });
+            }
+
+            return res.json({
+                sucesso:
+                    true,
+
+                sala
+            });
+
+        } catch (erro) {
+
+            console.error(
+                "Erro ao consultar sala:",
+                erro
+            );
+
+            return res
+                .status(500)
+                .json({
+                    sucesso:
+                        false,
+
+                    erro:
+                        "Não foi possível consultar a sala."
+                });
+        }
+    }
+);
+
+// ======================================================
+// AUXILIARES WEBSOCKET
+// ======================================================
+
+function enviar(
+    ws,
+    dados
+) {
+
     if (
         ws &&
-        ws.readyState === WebSocket.OPEN
+        ws.readyState ===
+            WebSocket.OPEN
     ) {
-        ws.send(JSON.stringify(dados));
+
+        ws.send(
+            JSON.stringify(
+                dados
+            )
+        );
     }
 }
 
-function enviarParaSala(sala, dados) {
-    for (const jogador of sala.players) {
+function enviarParaSala(
+    sala,
+    dados
+) {
+
+    for (
+        const jogador
+        of sala.players
+    ) {
+
         if (
             jogador.connected &&
             jogador.socket
         ) {
-            enviar(jogador.socket, dados);
+
+            enviar(
+                jogador.socket,
+                dados
+            );
         }
     }
 }
 
 // ======================================================
-// SALAS PÚBLICAS
+// SALAS PÚBLICAS NO WEBSOCKET
 // ======================================================
 
 function obterSalasPublicas() {
-    return Array.from(rooms.values())
-        .filter((sala) => {
-            return (
-                sala.private === false &&
-                sala.status === "WAITING" &&
-                sala.players.length < 2
-            );
-        })
-        .map((sala) => ({
-            roomCode: sala.code,
 
-            hostName:
-                sala.players[0]?.name || null,
+    return Array.from(
+        rooms.values()
+    )
+        .filter(
+            (sala) => {
 
-            playersCount:
-                sala.players.length,
+                return (
+                    sala.private ===
+                        false &&
 
-            maxPlayers: 2,
+                    sala.status ===
+                        "WAITING" &&
 
-            status:
-                sala.status
-        }));
+                    sala.players.length <
+                        2
+                );
+            }
+        )
+        .map(
+            (sala) => ({
+
+                roomCode:
+                    sala.code,
+
+                hostName:
+                    sala.players[0]?.name ||
+                    sala.hostName ||
+                    null,
+
+                playersCount:
+                    sala.players.length,
+
+                maxPlayers:
+                    2,
+
+                status:
+                    sala.status
+            })
+        );
 }
 
-function enviarListaSalasPublicas(ws) {
-    enviar(ws, {
-        type: "ROOM_LIST_UPDATE",
+function enviarListaSalasPublicas(
+    ws
+) {
 
-        rooms:
-            obterSalasPublicas()
-    });
+    enviar(
+        ws,
+        {
+            type:
+                "ROOM_LIST_UPDATE",
+
+            rooms:
+                obterSalasPublicas()
+        }
+    );
 }
 
 function broadcastListaSalasPublicas() {
+
     const dados = {
-        type: "ROOM_LIST_UPDATE",
+        type:
+            "ROOM_LIST_UPDATE",
 
         rooms:
             obterSalasPublicas()
     };
 
-    for (const cliente of wss.clients) {
-        enviar(cliente, dados);
+    for (
+        const cliente
+        of wss.clients
+    ) {
+
+        enviar(
+            cliente,
+            dados
+        );
     }
 }
 
@@ -132,21 +1307,37 @@ function broadcastListaSalasPublicas() {
 // PLACAR
 // ======================================================
 
-function obterPlacar(sala) {
-    return sala.players.map((player) => ({
-        name: player.name,
-        symbol: player.symbol,
-        score: player.score
-    }));
+function obterPlacar(
+    sala
+) {
+
+    return sala.players.map(
+        (player) => ({
+
+            name:
+                player.name,
+
+            symbol:
+                player.symbol,
+
+            score:
+                player.score
+        })
+    );
 }
 
-function obterPlacarHostVisitante(sala) {
+function obterPlacarHostVisitante(
+    sala
+) {
+
     return {
         placarHost:
-            sala.players[0]?.score || 0,
+            sala.players[0]?.score ||
+            0,
 
         placarVisitante:
-            sala.players[1]?.score || 0
+            sala.players[1]?.score ||
+            0
     };
 }
 
@@ -154,31 +1345,51 @@ function obterPlacarHostVisitante(sala) {
 // CRONÔMETRO
 // ======================================================
 
-function cancelarCronometroTurno(sala) {
-    if (sala.turnTimer) {
-        clearTimeout(sala.turnTimer);
-
-        sala.turnTimer = null;
-    }
-
-    sala.turnDeadline = null;
-}
-
-function iniciarCronometroTurno(sala) {
-    cancelarCronometroTurno(sala);
+function cancelarCronometroTurno(
+    sala
+) {
 
     if (
-        sala.status !== "PLAYING" ||
+        sala.turnTimer
+    ) {
+
+        clearTimeout(
+            sala.turnTimer
+        );
+
+        sala.turnTimer =
+            null;
+    }
+
+    sala.turnDeadline =
+        null;
+}
+
+function iniciarCronometroTurno(
+    sala
+) {
+
+    cancelarCronometroTurno(
+        sala
+    );
+
+    if (
+        sala.status !==
+            "PLAYING" ||
+
         !sala.currentTurn
     ) {
+
         return;
     }
 
     if (
         sala.players.some(
-            (player) => !player.connected
+            (player) =>
+                !player.connected
         )
     ) {
+
         return;
     }
 
@@ -186,95 +1397,134 @@ function iniciarCronometroTurno(sala) {
         sala.currentTurn;
 
     sala.turnDeadline =
-        Date.now() + TEMPO_TURNO_MS;
+        Date.now() +
+        TEMPO_TURNO_MS;
 
-    enviarParaSala(sala, {
-        type: "TURN_TIMER",
+    enviarParaSala(
+        sala,
+        {
+            type:
+                "TURN_TIMER",
 
-        currentTurn:
-            simboloDoTurno,
+            currentTurn:
+                simboloDoTurno,
 
-        seconds:
-            TEMPO_TURNO_MS / 1000,
+            seconds:
+                TEMPO_TURNO_MS /
+                1000,
 
-        deadline:
-            sala.turnDeadline
-    });
+            deadline:
+                sala.turnDeadline
+        }
+    );
 
     sala.turnTimer =
-        setTimeout(async () => {
-            if (
-                sala.status !== "PLAYING" ||
-                sala.currentTurn !== simboloDoTurno
-            ) {
-                return;
-            }
+        setTimeout(
+            async () => {
 
-            const jogadorQuePerdeuOTurno =
-                simboloDoTurno;
+                if (
+                    sala.status !==
+                        "PLAYING" ||
 
-            sala.currentTurn =
-                jogadorQuePerdeuOTurno === "X"
-                    ? "O"
-                    : "X";
+                    sala.currentTurn !==
+                        simboloDoTurno
+                ) {
 
-            sala.turnTimer = null;
-            sala.turnDeadline = null;
-
-            if (sala.idPartida) {
-                try {
-                    await atualizarTurnoPartida(
-                        sala.idPartida,
-                        sala.currentTurn
-                    );
-                } catch (erro) {
-                    console.error(
-                        "Erro ao atualizar turno no banco:",
-                        erro.message
-                    );
+                    return;
                 }
-            }
 
-            enviarParaSala(sala, {
-                type: "TURN_TIMEOUT",
+                const jogadorQuePerdeuOTurno =
+                    simboloDoTurno;
 
-                timedOutSymbol:
-                    jogadorQuePerdeuOTurno,
+                sala.currentTurn =
+                    jogadorQuePerdeuOTurno ===
+                        "X"
+                        ? "O"
+                        : "X";
 
-                nextTurn:
-                    sala.currentTurn,
+                sala.turnTimer =
+                    null;
 
-                message:
+                sala.turnDeadline =
+                    null;
+
+                if (
+                    sala.idPartida
+                ) {
+
+                    try {
+
+                        await atualizarTurnoPartida(
+                            sala.idPartida,
+
+                            sala.currentTurn
+                        );
+
+                    } catch (erro) {
+
+                        console.error(
+                            "Erro ao atualizar turno no banco:",
+                            erro.message
+                        );
+                    }
+                }
+
+                enviarParaSala(
+                    sala,
+                    {
+                        type:
+                            "TURN_TIMEOUT",
+
+                        timedOutSymbol:
+                            jogadorQuePerdeuOTurno,
+
+                        nextTurn:
+                            sala.currentTurn,
+
+                        message:
+                            `Tempo do jogador ` +
+                            `${jogadorQuePerdeuOTurno} esgotado.`
+                    }
+                );
+
+                enviarParaSala(
+                    sala,
+                    {
+                        type:
+                            "BOARD_UPDATE",
+
+                        board:
+                            sala.board,
+
+                        nextTurn:
+                            sala.currentTurn
+                    }
+                );
+
+                console.log(
                     `Tempo do jogador ` +
-                    `${jogadorQuePerdeuOTurno} esgotado.`
-            });
+                    `${jogadorQuePerdeuOTurno} esgotado. ` +
+                    `Próximo turno: ${sala.currentTurn}`
+                );
 
-            enviarParaSala(sala, {
-                type: "BOARD_UPDATE",
+                iniciarCronometroTurno(
+                    sala
+                );
 
-                board:
-                    sala.board,
+            },
 
-                nextTurn:
-                    sala.currentTurn
-            });
-
-            console.log(
-                `Tempo do jogador ` +
-                `${jogadorQuePerdeuOTurno} esgotado. ` +
-                `Próximo turno: ${sala.currentTurn}`
-            );
-
-            iniciarCronometroTurno(sala);
-
-        }, TEMPO_TURNO_MS);
+            TEMPO_TURNO_MS
+        );
 }
 
 // ======================================================
 // REGRAS
 // ======================================================
 
-function verificarVencedor(board) {
+function verificarVencedor(
+    board
+) {
+
     const combinacoes = [
         [0, 1, 2],
         [3, 4, 5],
@@ -288,14 +1538,24 @@ function verificarVencedor(board) {
         [2, 4, 6]
     ];
 
-    for (const combinacao of combinacoes) {
-        const [a, b, c] = combinacao;
+    for (
+        const combinacao
+        of combinacoes
+    ) {
+
+        const [a, b, c] =
+            combinacao;
 
         if (
             board[a] !== "" &&
-            board[a] === board[b] &&
-            board[a] === board[c]
+
+            board[a] ===
+                board[b] &&
+
+            board[a] ===
+                board[c]
         ) {
+
             return board[a];
         }
     }
@@ -303,9 +1563,13 @@ function verificarVencedor(board) {
     return null;
 }
 
-function verificarEmpate(board) {
+function verificarEmpate(
+    board
+) {
+
     return board.every(
-        (celula) => celula !== ""
+        (celula) =>
+            celula !== ""
     );
 }
 
@@ -313,165 +1577,238 @@ function verificarEmpate(board) {
 // WEBSOCKET
 // ======================================================
 
-wss.on("connection", (ws) => {
-    console.log(
-        "Novo jogador conectado via WebSocket!"
-    );
+wss.on(
+    "connection",
+    (ws) => {
 
-    ws.roomCode = null;
-    ws.playerName = null;
-    ws.playerSymbol = null;
-    ws.playerId = null;
+        console.log(
+            "Novo jogador conectado via WebSocket!"
+        );
 
-    enviar(ws, {
-        type: "CONNECTED",
+        ws.roomCode =
+            null;
 
-        message:
-            "Conectado ao servidor WebSocket!"
-    });
+        ws.playerName =
+            null;
 
-    // Sempre que alguém conecta,
-    // recebe a lista pública atual.
-    enviarListaSalasPublicas(ws);
+        ws.playerSymbol =
+            null;
 
-    ws.on("message", async (data) => {
-        try {
-            const mensagem =
-                JSON.parse(
-                    data.toString()
-                );
+        ws.playerId =
+            null;
 
-            console.log(
-                "Mensagem recebida:",
-                mensagem
-            );
-
-            switch (mensagem.type) {
-
-                case "JOIN_ROOM":
-                    await entrarNaSala(
-                        ws,
-                        mensagem
-                    );
-                    break;
-
-                case "LIST_ROOMS":
-                    enviarListaSalasPublicas(ws);
-                    break;
-
-                case "MOVE":
-                    await executarJogada(
-                        ws,
-                        mensagem
-                    );
-                    break;
-
-                case "CHAT":
-                    await enviarMensagemChat(
-                        ws,
-                        mensagem
-                    );
-                    break;
-
-                case "NEW_GAME":
-                    await solicitarRevanche(ws);
-                    break;
-
-                default:
-                    enviar(ws, {
-                        type: "ERROR",
-
-                        message:
-                            "Tipo de mensagem desconhecido."
-                    });
-            }
-
-        } catch (erro) {
-            console.error(
-                "Erro ao processar mensagem:",
-                erro
-            );
-
-            enviar(ws, {
-                type: "ERROR",
+        enviar(
+            ws,
+            {
+                type:
+                    "CONNECTED",
 
                 message:
-                    "Não foi possível processar a mensagem."
-            });
-        }
-    });
+                    "Conectado ao servidor WebSocket!"
+            }
+        );
 
-    ws.on("close", () => {
-        tratarDesconexao(ws)
-            .catch((erro) => {
-                console.error(
-                    "Erro ao tratar desconexão:",
-                    erro
-                );
-            });
-    });
-});
+        enviarListaSalasPublicas(
+            ws
+        );
+
+        ws.on(
+            "message",
+
+            async (data) => {
+
+                try {
+
+                    const mensagem =
+                        JSON.parse(
+                            data.toString()
+                        );
+
+                    console.log(
+                        "Mensagem recebida:",
+                        mensagem
+                    );
+
+                    switch (
+                        mensagem.type
+                    ) {
+
+                        case "JOIN_ROOM":
+
+                            await entrarNaSala(
+                                ws,
+                                mensagem
+                            );
+
+                            break;
+
+                        case "LIST_ROOMS":
+
+                            enviarListaSalasPublicas(
+                                ws
+                            );
+
+                            break;
+
+                        case "MOVE":
+
+                            await executarJogada(
+                                ws,
+                                mensagem
+                            );
+
+                            break;
+
+                        case "CHAT":
+
+                            await enviarMensagemChat(
+                                ws,
+                                mensagem
+                            );
+
+                            break;
+
+                        case "NEW_GAME":
+
+                            await solicitarRevanche(
+                                ws
+                            );
+
+                            break;
+
+                        default:
+
+                            enviar(
+                                ws,
+                                {
+                                    type:
+                                        "ERROR",
+
+                                    message:
+                                        "Tipo de mensagem desconhecido."
+                                }
+                            );
+                    }
+
+                } catch (erro) {
+
+                    console.error(
+                        "Erro ao processar mensagem:",
+                        erro
+                    );
+
+                    enviar(
+                        ws,
+                        {
+                            type:
+                                "ERROR",
+
+                            message:
+                                "Não foi possível processar a mensagem."
+                        }
+                    );
+                }
+            }
+        );
+
+        ws.on(
+            "close",
+            () => {
+
+                tratarDesconexao(
+                    ws
+                )
+                    .catch(
+                        (erro) => {
+
+                            console.error(
+                                "Erro ao tratar desconexão:",
+                                erro
+                            );
+                        }
+                    );
+            }
+        );
+    }
+);
 
 // ======================================================
-// SALAS
+// ENTRAR / CRIAR SALA
 // ======================================================
 
 async function entrarNaSala(
     ws,
     mensagem
 ) {
+
     const playerName =
         String(
-            mensagem.playerName || ""
+            mensagem.playerName ||
+            ""
         ).trim();
 
     let roomCode =
         mensagem.roomCode;
 
-    if (!playerName) {
-        enviar(ws, {
-            type: "ERROR",
+    if (
+        !playerName
+    ) {
 
-            message:
-                "Nome do jogador é obrigatório."
-        });
+        enviar(
+            ws,
+            {
+                type:
+                    "ERROR",
+
+                message:
+                    "Nome do jogador é obrigatório."
+            }
+        );
 
         return;
     }
 
     try {
+
         let sala;
+
         let jogadorBanco;
 
         // ==================================================
-        // CRIAR SALA
+        // CRIAR PELO WEBSOCKET
         // ==================================================
 
-        if (!roomCode) {
+        if (
+            !roomCode
+        ) {
+
             jogadorBanco =
                 await buscarOuCriarJogador(
                     playerName
                 );
 
-            // Privada é o padrão.
-            // Para criar pública:
-            // private: false
             const privada =
-                mensagem.private !== false;
+                mensagem.private !==
+                false;
 
             let codigoJaExiste;
 
             do {
+
                 roomCode =
                     gerarCodigoSala();
 
                 codigoJaExiste =
-                    rooms.has(roomCode) ||
+                    rooms.has(
+                        roomCode
+                    ) ||
                     await codigoSalaExiste(
                         roomCode
                     );
 
-            } while (codigoJaExiste);
+            } while (
+                codigoJaExiste
+            );
 
             const idSala =
                 await criarSalaBanco(
@@ -482,39 +1819,20 @@ async function entrarNaSala(
                     privada
                 );
 
-            sala = {
-                idSala,
-                idPartida: null,
+            sala =
+                criarEstruturaSala({
+                    idSala,
 
-                code:
                     roomCode,
 
-                private:
                     privada,
 
-                players: [],
+                    hostId:
+                        jogadorBanco.id_jogador,
 
-                board: [
-                    "", "", "",
-                    "", "", "",
-                    "", "", ""
-                ],
-
-                currentTurn:
-                    "X",
-
-                status:
-                    "WAITING",
-
-                rematchRequests:
-                    new Set(),
-
-                turnTimer:
-                    null,
-
-                turnDeadline:
-                    null
-            };
+                    hostName:
+                        playerName
+                });
 
             rooms.set(
                 roomCode,
@@ -529,38 +1847,61 @@ async function entrarNaSala(
         }
 
         // ==================================================
-        // ENTRAR EM SALA
+        // ENTRAR EM SALA EXISTENTE
         // ==================================================
 
         else {
+
             roomCode =
-                String(roomCode)
+                String(
+                    roomCode
+                )
                     .trim()
                     .toUpperCase();
 
+            // Procura na memória.
+            // Se não existir, procura no SQLite.
             sala =
-                rooms.get(roomCode);
+                await buscarOuRecuperarSala(
+                    roomCode
+                );
 
-            if (!sala) {
-                enviar(ws, {
-                    type: "ROOM_NOT_FOUND",
+            if (
+                !sala
+            ) {
 
-                    message:
-                        "Sala não encontrada."
-                });
+                enviar(
+                    ws,
+                    {
+                        type:
+                            "ROOM_NOT_FOUND",
+
+                        message:
+                            "Sala não encontrada ou não está disponível para entrada."
+                    }
+                );
 
                 return;
             }
 
-            // Reconexão
+            // ==========================================
+            // RECONEXÃO
+            // ==========================================
+
             const jogadorDesconectado =
                 sala.players.find(
                     (player) =>
-                        player.name === playerName &&
+
+                        player.name ===
+                            playerName &&
+
                         !player.connected
                 );
 
-            if (jogadorDesconectado) {
+            if (
+                jogadorDesconectado
+            ) {
+
                 reconectarJogador(
                     ws,
                     sala,
@@ -570,15 +1911,47 @@ async function entrarNaSala(
                 return;
             }
 
+            // Sala HTTP persistida:
+            // o host precisa entrar primeiro.
             if (
-                sala.players.length >= 2
-            ) {
-                enviar(ws, {
-                    type: "ROOM_FULL",
+                sala.players.length ===
+                    0 &&
 
-                    message:
-                        "A sala já possui dois jogadores."
-                });
+                sala.hostName &&
+
+                playerName !==
+                    sala.hostName
+            ) {
+
+                enviar(
+                    ws,
+                    {
+                        type:
+                            "ROOM_HOST_REQUIRED",
+
+                        message:
+                            "Aguarde o host entrar na sala primeiro."
+                    }
+                );
+
+                return;
+            }
+
+            if (
+                sala.players.length >=
+                2
+            ) {
+
+                enviar(
+                    ws,
+                    {
+                        type:
+                            "ROOM_FULL",
+
+                        message:
+                            "A sala já possui dois jogadores."
+                    }
+                );
 
                 return;
             }
@@ -594,11 +1967,13 @@ async function entrarNaSala(
         // ==================================================
 
         const simbolo =
-            sala.players.length === 0
+            sala.players.length ===
+                0
                 ? "X"
                 : "O";
 
         const jogador = {
+
             idJogador:
                 jogadorBanco.id_jogador,
 
@@ -622,8 +1997,23 @@ async function entrarNaSala(
         };
 
         if (
-            sala.players.length === 1
+            sala.players.length ===
+            0
         ) {
+
+            sala.hostId =
+                jogadorBanco.id_jogador;
+
+            sala.hostName =
+                playerName;
+        }
+
+        // Segundo jogador
+        if (
+            sala.players.length ===
+            1
+        ) {
+
             await adicionarVisitanteSala(
                 sala.idSala,
 
@@ -631,7 +2021,9 @@ async function entrarNaSala(
             );
         }
 
-        sala.players.push(jogador);
+        sala.players.push(
+            jogador
+        );
 
         ws.roomCode =
             roomCode;
@@ -645,41 +2037,40 @@ async function entrarNaSala(
         ws.playerId =
             jogadorBanco.id_jogador;
 
-        enviar(ws, {
-            type: "ROOM_JOINED",
+        enviar(
+            ws,
+            {
+                type:
+                    "ROOM_JOINED",
 
-            roomCode,
+                roomCode,
 
-            playerName,
+                playerName,
 
-            playerSymbol:
-                simbolo,
+                playerSymbol:
+                    simbolo,
 
-            private:
-                sala.private
-        });
+                private:
+                    sala.private
+            }
+        );
 
         console.log(
             `${playerName} entrou na sala ` +
             `${roomCode} como ${simbolo}`
         );
 
-        console.log(
-            `Jogador ${playerName} possui ID ` +
-            `${jogadorBanco.id_jogador} no banco`
-        );
-
-        // A lista pública mudou:
-        // nova sala apareceu ou recebeu jogador.
         broadcastListaSalasPublicas();
 
         // ==================================================
-        // COMEÇA PARTIDA
+        // INICIA PARTIDA
         // ==================================================
 
         if (
-            sala.players.length === 2
+            sala.players.length ===
+            2
         ) {
+
             sala.status =
                 "PLAYING";
 
@@ -711,35 +2102,39 @@ async function entrarNaSala(
                 `Partida ${sala.idPartida} criada no banco.`
             );
 
-            enviarParaSala(sala, {
-                type: "GAME_STARTED",
+            enviarParaSala(
+                sala,
+                {
+                    type:
+                        "GAME_STARTED",
 
-                roomCode,
+                    roomCode,
 
-                currentTurn:
-                    sala.currentTurn,
+                    currentTurn:
+                        sala.currentTurn,
 
-                players:
-                    sala.players.map(
-                        (player) => ({
-                            name:
-                                player.name,
+                    players:
+                        sala.players.map(
+                            (player) => ({
+                                name:
+                                    player.name,
 
-                            symbol:
-                                player.symbol
-                        })
-                    ),
+                                symbol:
+                                    player.symbol
+                            })
+                        ),
 
-                score:
-                    obterPlacar(sala)
-            });
+                    score:
+                        obterPlacar(
+                            sala
+                        )
+                }
+            );
 
             console.log(
                 `Partida iniciada na sala ${roomCode}`
             );
 
-            // Agora a sala pública ficou cheia
-            // e precisa sair do lobby.
             broadcastListaSalasPublicas();
 
             iniciarCronometroTurno(
@@ -748,17 +2143,22 @@ async function entrarNaSala(
         }
 
     } catch (erro) {
+
         console.error(
             "Erro ao registrar jogador/sala/partida no banco:",
             erro
         );
 
-        enviar(ws, {
-            type: "DATABASE_ERROR",
+        enviar(
+            ws,
+            {
+                type:
+                    "DATABASE_ERROR",
 
-            message:
-                "Não foi possível registrar os dados no banco."
-        });
+                message:
+                    "Não foi possível registrar os dados no banco."
+            }
+        );
     }
 }
 
@@ -770,36 +2170,53 @@ async function executarJogada(
     ws,
     mensagem
 ) {
+
     const roomCode =
         ws.roomCode;
 
     const position =
         mensagem.position;
 
-    if (!roomCode) {
-        enviar(ws, {
-            type: "INVALID_MOVE",
+    if (
+        !roomCode
+    ) {
 
-            message:
-                "Você não está em uma sala."
-        });
+        enviar(
+            ws,
+            {
+                type:
+                    "INVALID_MOVE",
+
+                message:
+                    "Você não está em uma sala."
+            }
+        );
 
         return;
     }
 
     const sala =
-        rooms.get(roomCode);
+        rooms.get(
+            roomCode
+        );
 
     if (
         !sala ||
-        sala.status !== "PLAYING"
-    ) {
-        enviar(ws, {
-            type: "INVALID_MOVE",
 
-            message:
-                "A partida não está disponível."
-        });
+        sala.status !==
+            "PLAYING"
+    ) {
+
+        enviar(
+            ws,
+            {
+                type:
+                    "INVALID_MOVE",
+
+                message:
+                    "A partida não está disponível."
+            }
+        );
 
         return;
     }
@@ -810,12 +2227,17 @@ async function executarJogada(
                 !player.connected
         )
     ) {
-        enviar(ws, {
-            type: "INVALID_MOVE",
 
-            message:
-                "A partida está pausada aguardando reconexão."
-        });
+        enviar(
+            ws,
+            {
+                type:
+                    "INVALID_MOVE",
+
+                message:
+                    "A partida está pausada aguardando reconexão."
+            }
+        );
 
         return;
     }
@@ -827,40 +2249,60 @@ async function executarJogada(
         sala.currentTurn !==
         simboloJogador
     ) {
-        enviar(ws, {
-            type: "INVALID_MOVE",
 
-            message:
-                "Não é a sua vez."
-        });
+        enviar(
+            ws,
+            {
+                type:
+                    "INVALID_MOVE",
+
+                message:
+                    "Não é a sua vez."
+            }
+        );
 
         return;
     }
 
     if (
-        !Number.isInteger(position) ||
+        !Number.isInteger(
+            position
+        ) ||
+
         position < 0 ||
+
         position > 8
     ) {
-        enviar(ws, {
-            type: "INVALID_MOVE",
 
-            message:
-                "Posição inválida."
-        });
+        enviar(
+            ws,
+            {
+                type:
+                    "INVALID_MOVE",
+
+                message:
+                    "Posição inválida."
+            }
+        );
 
         return;
     }
 
     if (
-        sala.board[position] !== ""
+        sala.board[position] !==
+        ""
     ) {
-        enviar(ws, {
-            type: "INVALID_MOVE",
 
-            message:
-                "Essa posição já está ocupada."
-        });
+        enviar(
+            ws,
+            {
+                type:
+                    "INVALID_MOVE",
+
+                message:
+                    "Essa posição já está ocupada."
+            }
+        );
 
         return;
     }
@@ -873,6 +2315,7 @@ async function executarJogada(
         simboloJogador;
 
     try {
+
         await registrarJogada(
             sala.idPartida,
 
@@ -889,7 +2332,9 @@ async function executarJogada(
         );
 
     } catch (erro) {
-        sala.board[position] = "";
+
+        sala.board[position] =
+            "";
 
         iniciarCronometroTurno(
             sala
@@ -900,12 +2345,16 @@ async function executarJogada(
             erro
         );
 
-        enviar(ws, {
-            type: "DATABASE_ERROR",
+        enviar(
+            ws,
+            {
+                type:
+                    "DATABASE_ERROR",
 
-            message:
-                "Não foi possível registrar a jogada."
-        });
+                message:
+                    "Não foi possível registrar a jogada."
+            }
+        );
 
         return;
     }
@@ -919,7 +2368,10 @@ async function executarJogada(
     // VITÓRIA
     // ==================================================
 
-    if (vencedor) {
+    if (
+        vencedor
+    ) {
+
         sala.status =
             "FINISHED";
 
@@ -933,6 +2385,7 @@ async function executarJogada(
         const jogadorVencedor =
             sala.players.find(
                 (player) =>
+
                     player.symbol ===
                     vencedor
             );
@@ -940,12 +2393,17 @@ async function executarJogada(
         const jogadorPerdedor =
             sala.players.find(
                 (player) =>
+
                     player !==
                     jogadorVencedor
             );
 
-        if (jogadorVencedor) {
-            jogadorVencedor.score++;
+        if (
+            jogadorVencedor
+        ) {
+
+            jogadorVencedor
+                .score++;
         }
 
         const {
@@ -959,10 +2417,13 @@ async function executarJogada(
         const statusResultado =
             jogadorVencedor ===
                 sala.players[0]
+
                 ? "VITORIA_HOST"
+
                 : "VITORIA_VISITANTE";
 
         try {
+
             await atualizarStatusSala(
                 sala.idSala,
                 "FINALIZADA"
@@ -987,44 +2448,61 @@ async function executarJogada(
             );
 
         } catch (erro) {
+
             console.error(
                 "Erro ao finalizar partida no banco:",
                 erro
             );
         }
 
-        enviarParaSala(sala, {
-            type: "BOARD_UPDATE",
+        enviarParaSala(
+            sala,
+            {
+                type:
+                    "BOARD_UPDATE",
 
-            board:
-                sala.board,
+                board:
+                    sala.board,
 
-            nextTurn:
-                null
-        });
+                nextTurn:
+                    null
+            }
+        );
 
-        enviarParaSala(sala, {
-            type: "GAME_OVER",
+        enviarParaSala(
+            sala,
+            {
+                type:
+                    "GAME_OVER",
 
-            result:
-                "WIN",
+                result:
+                    "WIN",
 
-            winner:
-                vencedor,
+                winner:
+                    vencedor,
 
-            winnerName:
-                jogadorVencedor.name,
+                winnerName:
+                    jogadorVencedor.name,
 
-            score:
-                obterPlacar(sala)
-        });
+                score:
+                    obterPlacar(
+                        sala
+                    )
+            }
+        );
 
-        enviarParaSala(sala, {
-            type: "SCORE_UPDATE",
+        enviarParaSala(
+            sala,
+            {
+                type:
+                    "SCORE_UPDATE",
 
-            score:
-                obterPlacar(sala)
-        });
+                score:
+                    obterPlacar(
+                        sala
+                    )
+            }
+        );
 
         console.log(
             `Fim de jogo! ` +
@@ -1044,6 +2522,7 @@ async function executarJogada(
             sala.board
         )
     ) {
+
         sala.status =
             "FINISHED";
 
@@ -1063,6 +2542,7 @@ async function executarJogada(
             );
 
         try {
+
             await atualizarStatusSala(
                 sala.idSala,
                 "FINALIZADA"
@@ -1081,44 +2561,61 @@ async function executarJogada(
             );
 
         } catch (erro) {
+
             console.error(
                 "Erro ao registrar empate no banco:",
                 erro
             );
         }
 
-        enviarParaSala(sala, {
-            type: "BOARD_UPDATE",
+        enviarParaSala(
+            sala,
+            {
+                type:
+                    "BOARD_UPDATE",
 
-            board:
-                sala.board,
+                board:
+                    sala.board,
 
-            nextTurn:
-                null
-        });
+                nextTurn:
+                    null
+            }
+        );
 
-        enviarParaSala(sala, {
-            type: "GAME_OVER",
+        enviarParaSala(
+            sala,
+            {
+                type:
+                    "GAME_OVER",
 
-            result:
-                "DRAW",
+                result:
+                    "DRAW",
 
-            winner:
-                null,
+                winner:
+                    null,
 
-            winnerName:
-                null,
+                winnerName:
+                    null,
 
-            score:
-                obterPlacar(sala)
-        });
+                score:
+                    obterPlacar(
+                        sala
+                    )
+            }
+        );
 
-        enviarParaSala(sala, {
-            type: "SCORE_UPDATE",
+        enviarParaSala(
+            sala,
+            {
+                type:
+                    "SCORE_UPDATE",
 
-            score:
-                obterPlacar(sala)
-        });
+                score:
+                    obterPlacar(
+                        sala
+                    )
+            }
+        );
 
         console.log(
             "Fim de jogo! Empate."
@@ -1132,11 +2629,13 @@ async function executarJogada(
     // ==================================================
 
     sala.currentTurn =
-        simboloJogador === "X"
+        simboloJogador ===
+            "X"
             ? "O"
             : "X";
 
     try {
+
         await atualizarTurnoPartida(
             sala.idPartida,
 
@@ -1144,21 +2643,26 @@ async function executarJogada(
         );
 
     } catch (erro) {
+
         console.error(
             "Erro ao atualizar turno da partida:",
             erro.message
         );
     }
 
-    enviarParaSala(sala, {
-        type: "BOARD_UPDATE",
+    enviarParaSala(
+        sala,
+        {
+            type:
+                "BOARD_UPDATE",
 
-        board:
-            sala.board,
+            board:
+                sala.board,
 
-        nextTurn:
-            sala.currentTurn
-    });
+            nextTurn:
+                sala.currentTurn
+        }
+    );
 
     console.log(
         `Próximo turno: ${sala.currentTurn}`
@@ -1177,51 +2681,77 @@ async function enviarMensagemChat(
     ws,
     mensagem
 ) {
+
     const roomCode =
         ws.roomCode;
 
-    if (!roomCode) {
-        enviar(ws, {
-            type: "CHAT_ERROR",
+    if (
+        !roomCode
+    ) {
 
-            message:
-                "Você não está em uma sala."
-        });
+        enviar(
+            ws,
+            {
+                type:
+                    "CHAT_ERROR",
+
+                message:
+                    "Você não está em uma sala."
+            }
+        );
 
         return;
     }
 
     const sala =
-        rooms.get(roomCode);
+        rooms.get(
+            roomCode
+        );
 
-    if (!sala) {
-        enviar(ws, {
-            type: "CHAT_ERROR",
+    if (
+        !sala
+    ) {
 
-            message:
-                "Sala não encontrada."
-        });
+        enviar(
+            ws,
+            {
+                type:
+                    "CHAT_ERROR",
+
+                message:
+                    "Sala não encontrada."
+            }
+        );
 
         return;
     }
 
     const texto =
         String(
-            mensagem.message || ""
+            mensagem.message ||
+            ""
         ).trim();
 
-    if (!texto) {
-        enviar(ws, {
-            type: "CHAT_ERROR",
+    if (
+        !texto
+    ) {
 
-            message:
-                "A mensagem não pode estar vazia."
-        });
+        enviar(
+            ws,
+            {
+                type:
+                    "CHAT_ERROR",
+
+                message:
+                    "A mensagem não pode estar vazia."
+            }
+        );
 
         return;
     }
 
     try {
+
         await registrarMensagemChat(
             sala.idSala,
 
@@ -1231,33 +2761,42 @@ async function enviarMensagemChat(
         );
 
     } catch (erro) {
+
         console.error(
             "Erro ao registrar mensagem no banco:",
             erro
         );
 
-        enviar(ws, {
-            type: "CHAT_ERROR",
+        enviar(
+            ws,
+            {
+                type:
+                    "CHAT_ERROR",
 
-            message:
-                "Não foi possível salvar a mensagem."
-        });
+                message:
+                    "Não foi possível salvar a mensagem."
+            }
+        );
 
         return;
     }
 
-    enviarParaSala(sala, {
-        type: "CHAT_MESSAGE",
+    enviarParaSala(
+        sala,
+        {
+            type:
+                "CHAT_MESSAGE",
 
-        playerName:
-            ws.playerName,
+            playerName:
+                ws.playerName,
 
-        playerSymbol:
-            ws.playerSymbol,
+            playerSymbol:
+                ws.playerSymbol,
 
-        message:
-            texto
-    });
+            message:
+                texto
+        }
+    );
 
     console.log(
         `[CHAT ${roomCode}] ` +
@@ -1269,31 +2808,50 @@ async function enviarMensagemChat(
 // REVANCHE
 // ======================================================
 
-async function solicitarRevanche(ws) {
+async function solicitarRevanche(
+    ws
+) {
+
     const roomCode =
         ws.roomCode;
 
-    if (!roomCode) {
-        enviar(ws, {
-            type: "NEW_GAME_ERROR",
+    if (
+        !roomCode
+    ) {
 
-            message:
-                "Você não está em uma sala."
-        });
+        enviar(
+            ws,
+            {
+                type:
+                    "NEW_GAME_ERROR",
+
+                message:
+                    "Você não está em uma sala."
+            }
+        );
 
         return;
     }
 
     const sala =
-        rooms.get(roomCode);
+        rooms.get(
+            roomCode
+        );
 
-    if (!sala) {
-        enviar(ws, {
-            type: "NEW_GAME_ERROR",
+    if (
+        !sala
+    ) {
 
-            message:
-                "Sala não encontrada."
-        });
+        enviar(
+            ws,
+            {
+                type:
+                    "NEW_GAME_ERROR",
+
+                message:
+                    "Sala não encontrada."
+            }
+        );
 
         return;
     }
@@ -1302,30 +2860,42 @@ async function solicitarRevanche(ws) {
         sala.status !==
         "FINISHED"
     ) {
-        enviar(ws, {
-            type: "NEW_GAME_ERROR",
 
-            message:
-                "A partida atual ainda não terminou."
-        });
+        enviar(
+            ws,
+            {
+                type:
+                    "NEW_GAME_ERROR",
+
+                message:
+                    "A partida atual ainda não terminou."
+            }
+        );
 
         return;
     }
 
     if (
-        sala.rematchRequests.has(ws)
+        sala.rematchRequests
+            .has(ws)
     ) {
-        enviar(ws, {
-            type: "NEW_GAME_ERROR",
 
-            message:
-                "Você já solicitou a revanche."
-        });
+        enviar(
+            ws,
+            {
+                type:
+                    "NEW_GAME_ERROR",
+
+                message:
+                    "Você já solicitou a revanche."
+            }
+        );
 
         return;
     }
 
-    sala.rematchRequests.add(ws);
+    sala.rematchRequests
+        .add(ws);
 
     console.log(
         `${ws.playerName} solicitou revanche ` +
@@ -1333,24 +2903,32 @@ async function solicitarRevanche(ws) {
     );
 
     if (
-        sala.rematchRequests.size === 1
+        sala.rematchRequests
+            .size === 1
     ) {
-        enviarParaSala(sala, {
-            type: "REMATCH_REQUESTED",
 
-            requestedBy:
-                ws.playerName,
+        enviarParaSala(
+            sala,
+            {
+                type:
+                    "REMATCH_REQUESTED",
 
-            message:
-                `${ws.playerName} solicitou uma revanche.`
-        });
+                requestedBy:
+                    ws.playerName,
+
+                message:
+                    `${ws.playerName} solicitou uma revanche.`
+            }
+        );
 
         return;
     }
 
     if (
-        sala.rematchRequests.size === 2
+        sala.rematchRequests
+            .size === 2
     ) {
+
         await iniciarNovaPartida(
             sala
         );
@@ -1360,6 +2938,7 @@ async function solicitarRevanche(ws) {
 async function iniciarNovaPartida(
     sala
 ) {
+
     cancelarCronometroTurno(
         sala
     );
@@ -1374,12 +2953,17 @@ async function iniciarNovaPartida(
         const player
         of sala.players
     ) {
+
         player.symbol =
-            player.symbol === "X"
+            player.symbol ===
+                "X"
                 ? "O"
                 : "X";
 
-        if (player.socket) {
+        if (
+            player.socket
+        ) {
+
             player.socket.playerSymbol =
                 player.symbol;
         }
@@ -1391,9 +2975,11 @@ async function iniciarNovaPartida(
     sala.status =
         "PLAYING";
 
-    sala.rematchRequests.clear();
+    sala.rematchRequests
+        .clear();
 
     try {
+
         await atualizarStatusSala(
             sala.idSala,
             "EM_JOGO"
@@ -1423,47 +3009,58 @@ async function iniciarNovaPartida(
         );
 
     } catch (erro) {
+
         console.error(
             "Erro ao criar revanche no banco:",
             erro
         );
 
-        enviarParaSala(sala, {
-            type: "DATABASE_ERROR",
+        enviarParaSala(
+            sala,
+            {
+                type:
+                    "DATABASE_ERROR",
 
-            message:
-                "Não foi possível criar a nova partida."
-        });
+                message:
+                    "Não foi possível criar a nova partida."
+            }
+        );
 
         return;
     }
 
-    enviarParaSala(sala, {
-        type: "NEW_GAME_STARTED",
+    enviarParaSala(
+        sala,
+        {
+            type:
+                "NEW_GAME_STARTED",
 
-        roomCode:
-            sala.code,
+            roomCode:
+                sala.code,
 
-        board:
-            sala.board,
+            board:
+                sala.board,
 
-        currentTurn:
-            sala.currentTurn,
+            currentTurn:
+                sala.currentTurn,
 
-        players:
-            sala.players.map(
-                (player) => ({
-                    name:
-                        player.name,
+            players:
+                sala.players.map(
+                    (player) => ({
+                        name:
+                            player.name,
 
-                    symbol:
-                        player.symbol
-                })
-            ),
+                        symbol:
+                            player.symbol
+                    })
+                ),
 
-        score:
-            obterPlacar(sala)
-    });
+            score:
+                obterPlacar(
+                    sala
+                )
+        }
+    );
 
     console.log(
         `Nova partida iniciada na sala ${sala.code}`
@@ -1478,11 +3075,17 @@ async function iniciarNovaPartida(
 // DESCONEXÃO
 // ======================================================
 
-async function tratarDesconexao(ws) {
+async function tratarDesconexao(
+    ws
+) {
+
     const roomCode =
         ws.roomCode;
 
-    if (!roomCode) {
+    if (
+        !roomCode
+    ) {
+
         console.log(
             "Cliente desconectado antes de entrar em uma sala."
         );
@@ -1491,22 +3094,31 @@ async function tratarDesconexao(ws) {
     }
 
     const sala =
-        rooms.get(roomCode);
+        rooms.get(
+            roomCode
+        );
 
-    if (!sala) {
+    if (
+        !sala
+    ) {
+
         return;
     }
 
     const jogador =
         sala.players.find(
             (player) =>
-                player.socket === ws
+
+                player.socket ===
+                ws
         );
 
     if (
         !jogador ||
+
         !jogador.connected
     ) {
+
         return;
     }
 
@@ -1522,35 +3134,64 @@ async function tratarDesconexao(ws) {
     );
 
     // ==================================================
-    // SALA AINDA AGUARDANDO
+    // SALA AGUARDANDO
     // ==================================================
 
     if (
         sala.status ===
         "WAITING"
     ) {
+
+        // ==============================================
+        // PRIVADA
+        // ==============================================
+        //
+        // NÃO APAGA.
+        //
+        // Assim ela continua persistida no SQLite.
+        //
+
+        if (
+            sala.private
+        ) {
+
+            console.log(
+                `Sala privada ${roomCode} permanece ` +
+                `persistida aguardando reconexão.`
+            );
+
+            return;
+        }
+
+        // ==============================================
+        // PÚBLICA
+        // ==============================================
+        //
+        // Mantém comportamento antigo.
+        //
+
         rooms.delete(
             roomCode
         );
 
         try {
+
             await removerSalaBanco(
                 sala.idSala
             );
 
             console.log(
-                `Sala ${roomCode} removida do banco.`
+                `Sala pública ${roomCode} removida do banco.`
             );
 
         } catch (erro) {
+
             console.error(
-                "Erro ao remover sala do banco:",
+                "Erro ao remover sala pública do banco:",
                 erro.message
             );
         }
 
-        // Caso fosse uma sala pública,
-        // ela deve desaparecer do lobby.
         broadcastListaSalasPublicas();
 
         return;
@@ -1560,6 +3201,7 @@ async function tratarDesconexao(ws) {
         sala.status !==
         "PLAYING"
     ) {
+
         return;
     }
 
@@ -1567,36 +3209,50 @@ async function tratarDesconexao(ws) {
         sala
     );
 
-    enviarParaSala(sala, {
-        type: "PLAYER_DISCONNECTED",
+    enviarParaSala(
+        sala,
+        {
+            type:
+                "PLAYER_DISCONNECTED",
 
-        playerName:
-            jogador.name,
+            playerName:
+                jogador.name,
 
-        playerSymbol:
-            jogador.symbol,
+            playerSymbol:
+                jogador.symbol,
 
-        reconnectSeconds:
-            TEMPO_RECONEXAO_MS / 1000,
+            reconnectSeconds:
+                TEMPO_RECONEXAO_MS /
+                1000,
 
-        message:
-            `${jogador.name} desconectou. ` +
-            `Aguardando reconexão por 30 segundos.`
-    });
+            message:
+                `${jogador.name} desconectou. ` +
+                `Aguardando reconexão por 30 segundos.`
+        }
+    );
 
     jogador.disconnectTimer =
-        setTimeout(() => {
-            finalizarPorWO(
-                sala,
-                jogador
-            ).catch((erro) => {
-                console.error(
-                    "Erro ao finalizar por W.O.:",
-                    erro
-                );
-            });
+        setTimeout(
+            () => {
 
-        }, TEMPO_RECONEXAO_MS);
+                finalizarPorWO(
+                    sala,
+                    jogador
+                )
+                    .catch(
+                        (erro) => {
+
+                            console.error(
+                                "Erro ao finalizar por W.O.:",
+                                erro
+                            );
+                        }
+                    );
+
+            },
+
+            TEMPO_RECONEXAO_MS
+        );
 }
 
 // ======================================================
@@ -1608,9 +3264,11 @@ function reconectarJogador(
     sala,
     jogador
 ) {
+
     if (
         jogador.disconnectTimer
     ) {
+
         clearTimeout(
             jogador.disconnectTimer
         );
@@ -1637,57 +3295,67 @@ function reconectarJogador(
     ws.playerId =
         jogador.idJogador;
 
-    enviar(ws, {
-        type: "ROOM_RECONNECTED",
+    enviar(
+        ws,
+        {
+            type:
+                "ROOM_RECONNECTED",
 
-        roomCode:
-            sala.code,
+            roomCode:
+                sala.code,
 
-        playerName:
-            jogador.name,
+            playerName:
+                jogador.name,
 
-        playerSymbol:
-            jogador.symbol,
+            playerSymbol:
+                jogador.symbol,
 
-        board:
-            sala.board,
+            board:
+                sala.board,
 
-        currentTurn:
-            sala.currentTurn,
+            currentTurn:
+                sala.currentTurn,
 
-        status:
-            sala.status,
+            status:
+                sala.status,
 
-        score:
-            obterPlacar(sala),
+            score:
+                obterPlacar(
+                    sala
+                ),
 
-        players:
-            sala.players.map(
-                (player) => ({
-                    name:
-                        player.name,
+            players:
+                sala.players.map(
+                    (player) => ({
+                        name:
+                            player.name,
 
-                    symbol:
-                        player.symbol,
+                        symbol:
+                            player.symbol,
 
-                    connected:
-                        player.connected
-                })
-            )
-    });
+                        connected:
+                            player.connected
+                    })
+                )
+        }
+    );
 
-    enviarParaSala(sala, {
-        type: "PLAYER_RECONNECTED",
+    enviarParaSala(
+        sala,
+        {
+            type:
+                "PLAYER_RECONNECTED",
 
-        playerName:
-            jogador.name,
+            playerName:
+                jogador.name,
 
-        playerSymbol:
-            jogador.symbol,
+            playerSymbol:
+                jogador.symbol,
 
-        message:
-            `${jogador.name} reconectou à partida.`
-    });
+            message:
+                `${jogador.name} reconectou à partida.`
+        }
+    );
 
     console.log(
         `${jogador.name} reconectou ` +
@@ -1698,6 +3366,7 @@ function reconectarJogador(
         sala.status ===
         "PLAYING"
     ) {
+
         iniciarCronometroTurno(
             sala
         );
@@ -1712,12 +3381,16 @@ async function finalizarPorWO(
     sala,
     jogadorDesconectado
 ) {
-    jogadorDesconectado.disconnectTimer =
+
+    jogadorDesconectado
+        .disconnectTimer =
         null;
 
     if (
-        jogadorDesconectado.connected
+        jogadorDesconectado
+            .connected
     ) {
+
         return;
     }
 
@@ -1725,6 +3398,7 @@ async function finalizarPorWO(
         sala.status !==
         "PLAYING"
     ) {
+
         return;
     }
 
@@ -1735,8 +3409,10 @@ async function finalizarPorWO(
     const vencedor =
         sala.players.find(
             (player) =>
+
                 player !==
                     jogadorDesconectado &&
+
                 player.connected
         );
 
@@ -1746,9 +3422,13 @@ async function finalizarPorWO(
     sala.currentTurn =
         null;
 
-    sala.rematchRequests.clear();
+    sala.rematchRequests
+        .clear();
 
-    if (!vencedor) {
+    if (
+        !vencedor
+    ) {
+
         console.log(
             `Partida da sala ${sala.code} ` +
             `encerrada sem vencedor.`
@@ -1770,10 +3450,13 @@ async function finalizarPorWO(
     const statusResultado =
         vencedor ===
             sala.players[0]
+
             ? "VITORIA_HOST"
+
             : "VITORIA_VISITANTE";
 
     try {
+
         await atualizarStatusSala(
             sala.idSala,
             "FINALIZADA"
@@ -1798,37 +3481,50 @@ async function finalizarPorWO(
         );
 
     } catch (erro) {
+
         console.error(
             "Erro ao registrar W.O. no banco:",
             erro
         );
     }
 
-    enviarParaSala(sala, {
-        type: "GAME_OVER",
+    enviarParaSala(
+        sala,
+        {
+            type:
+                "GAME_OVER",
 
-        result:
-            "WO",
+            result:
+                "WO",
 
-        winner:
-            vencedor.symbol,
+            winner:
+                vencedor.symbol,
 
-        winnerName:
-            vencedor.name,
+            winnerName:
+                vencedor.name,
 
-        disconnectedPlayer:
-            jogadorDesconectado.name,
+            disconnectedPlayer:
+                jogadorDesconectado.name,
 
-        score:
-            obterPlacar(sala)
-    });
+            score:
+                obterPlacar(
+                    sala
+                )
+        }
+    );
 
-    enviarParaSala(sala, {
-        type: "SCORE_UPDATE",
+    enviarParaSala(
+        sala,
+        {
+            type:
+                "SCORE_UPDATE",
 
-        score:
-            obterPlacar(sala)
-    });
+            score:
+                obterPlacar(
+                    sala
+                )
+        }
+    );
 
     console.log(
         `${vencedor.name} venceu por W.O. ` +
@@ -1842,25 +3538,49 @@ async function finalizarPorWO(
 // ======================================================
 
 inicializarBanco()
-    .then(() => {
-        server.listen(
-            PORT,
-            () => {
-                console.log(
-                    `Servidor rodando em http://localhost:${PORT}`
-                );
 
-                console.log(
-                    `WebSocket rodando em ws://localhost:${PORT}`
-                );
-            }
-        );
-    })
-    .catch((erro) => {
-        console.error(
-            "Não foi possível iniciar o banco:",
-            erro
-        );
+    .then(
+        async () => {
 
-        process.exit(1);
-    });
+            // Recupera salas privadas salvas
+            // anteriormente no SQLite.
+            await recuperarSalasPrivadasPersistidas();
+
+            server.listen(
+                PORT,
+
+                () => {
+
+                    console.log(
+                        `Servidor rodando em http://localhost:${PORT}`
+                    );
+
+                    console.log(
+                        `WebSocket rodando em ws://localhost:${PORT}`
+                    );
+
+                    console.log(
+                        "Autenticação HTTP disponível."
+                    );
+
+                    console.log(
+                        "GET/POST de salas disponíveis."
+                    );
+                }
+            );
+        }
+    )
+
+    .catch(
+        (erro) => {
+
+            console.error(
+                "Não foi possível iniciar o banco:",
+                erro
+            );
+
+            process.exit(
+                1
+            );
+        }
+    );
