@@ -6,64 +6,48 @@ const { WebSocketServer, WebSocket } = require("ws");
 
 const {
     inicializarBanco,
-
     buscarOuCriarJogador,
     registrarVitoriaDerrota,
-
     criarJogadorAutenticado,
     buscarJogadorPorEmail,
     buscarJogadorPorId,
     buscarJogadorPorNickname,
     atualizarCredenciaisJogador,
-
     codigoSalaExiste,
     criarSalaBanco,
     adicionarVisitanteSala,
     atualizarStatusSala,
     removerSalaBanco,
-
     listarSalasBanco,
     listarSalasPublicasBanco,
     listarSalasPrivadasBanco,
     buscarSalaPorCodigoBanco,
     listarSalasAguardandoBanco,
-
     criarPartida,
     atualizarTurnoPartida,
     finalizarPartida,
-
     registrarJogada,
     registrarMensagemChat
 } = require("./database/database");
 
-// ======================================================
-// CONFIGURAÇÃO
-// ======================================================
-
 const app = express();
-app.use(express.static("public"));
 
 const PORT = 3000;
 
 const TEMPO_TURNO_MS = 15000;
-
 const TEMPO_RECONEXAO_MS = 30000;
 
-// Permite receber JSON nos POSTs
-app.use(
-    express.json()
-);
+// ======================================================
+// MIDDLEWARES
+// ======================================================
 
-// Permite receber formulários HTML
+app.use(express.json());
+
 app.use(
     express.urlencoded({
         extended: false
     })
 );
-
-// ======================================================
-// SESSÃO / LOGIN
-// ======================================================
 
 app.use(
     session({
@@ -93,7 +77,6 @@ app.use(
     })
 );
 
-// Arquivos HTML/CSS/JS do frontend
 app.use(
     express.static("public")
 );
@@ -110,7 +93,6 @@ const wss =
         server
     });
 
-// Salas atualmente carregadas em memória
 const rooms =
     new Map();
 
@@ -173,7 +155,6 @@ function exigirAutenticacao(
     next();
 }
 
-// Nunca envia senha_hash para o navegador
 function usuarioSeguro(
     jogador
 ) {
@@ -197,11 +178,12 @@ function usuarioSeguro(
 }
 
 // ======================================================
-// POST - CADASTRO
+// CADASTRO
 // ======================================================
 
 app.post(
     "/api/auth/register",
+
     async (req, res) => {
 
         try {
@@ -222,10 +204,6 @@ app.post(
                 String(
                     req.body.senha || ""
                 );
-
-            // ==========================================
-            // VALIDAÇÕES
-            // ==========================================
 
             if (
                 nickname.length < 2
@@ -273,10 +251,6 @@ app.post(
                     });
             }
 
-            // ==========================================
-            // EMAIL DUPLICADO
-            // ==========================================
-
             const jogadorComEmail =
                 await buscarJogadorPorEmail(
                     email
@@ -297,16 +271,11 @@ app.post(
                     });
             }
 
-            // ==========================================
-            // NICKNAME EXISTENTE
-            // ==========================================
-
             const jogadorComNickname =
                 await buscarJogadorPorNickname(
                     nickname
                 );
 
-            // Criptografa a senha
             const senhaHash =
                 await bcrypt.hash(
                     senha,
@@ -315,9 +284,6 @@ app.post(
 
             let jogador;
 
-            // Se o jogador existia dos testes antigos,
-            // mas ainda não tinha login,
-            // transforma ele em conta autenticada.
             if (
                 jogadorComNickname &&
                 !jogadorComNickname.email &&
@@ -359,10 +325,6 @@ app.post(
                     );
             }
 
-            // ==========================================
-            // CRIA SESSÃO
-            // ==========================================
-
             req.session.usuario =
                 usuarioSeguro(
                     jogador
@@ -402,11 +364,12 @@ app.post(
 );
 
 // ======================================================
-// POST - LOGIN
+// LOGIN
 // ======================================================
 
 app.post(
     "/api/auth/login",
+
     async (req, res) => {
 
         try {
@@ -518,7 +481,7 @@ app.post(
 );
 
 // ======================================================
-// GET - USUÁRIO LOGADO
+// USUÁRIO LOGADO
 // ======================================================
 
 app.get(
@@ -587,11 +550,12 @@ app.get(
 );
 
 // ======================================================
-// POST - LOGOUT
+// LOGOUT
 // ======================================================
 
 app.post(
     "/api/auth/logout",
+
     (req, res) => {
 
         req.session.destroy(
@@ -634,7 +598,7 @@ app.post(
 );
 
 // ======================================================
-// FUNÇÕES AUXILIARES DE SALA
+// FUNÇÕES DE SALA
 // ======================================================
 
 function gerarCodigoSala() {
@@ -664,7 +628,6 @@ function gerarCodigoSala() {
     return codigo;
 }
 
-// Cria a estrutura usada pelo WebSocket
 function criarEstruturaSala({
     idSala,
     roomCode,
@@ -674,6 +637,7 @@ function criarEstruturaSala({
 }) {
 
     return {
+
         idSala,
 
         idPartida:
@@ -717,13 +681,12 @@ function criarEstruturaSala({
     };
 }
 
-// Converte uma sala que veio do SQLite
-// para o formato usado em memória.
 function salaBancoParaMemoria(
     salaBanco
 ) {
 
     return criarEstruturaSala({
+
         idSala:
             salaBanco.id_sala,
 
@@ -745,7 +708,7 @@ function salaBancoParaMemoria(
 }
 
 // ======================================================
-// RECUPERA SALAS PRIVADAS APÓS REINICIAR NODE
+// RECUPERAR SALAS PRIVADAS
 // ======================================================
 
 async function recuperarSalasPrivadasPersistidas() {
@@ -761,8 +724,6 @@ async function recuperarSalasPrivadasPersistidas() {
         of salas
     ) {
 
-        // Só queremos recuperação automática
-        // de sala privada.
         if (
             Number(
                 salaBanco.privada
@@ -795,8 +756,6 @@ async function recuperarSalasPrivadasPersistidas() {
     );
 }
 
-// Se a sala não estiver na memória,
-// tenta buscar no SQLite.
 async function buscarOuRecuperarSala(
     roomCode
 ) {
@@ -825,8 +784,6 @@ async function buscarOuRecuperarSala(
         return null;
     }
 
-    // Não tentamos restaurar jogo em andamento
-    // sem o estado do tabuleiro.
     if (
         salaBanco.status_sala !==
         "AGUARDANDO"
@@ -849,7 +806,7 @@ async function buscarOuRecuperarSala(
 }
 
 // ======================================================
-// HTTP - POST SALA PRIVADA
+// HTTP - SALAS
 // ======================================================
 
 app.post(
@@ -885,25 +842,16 @@ app.post(
             const usuario =
                 req.session.usuario;
 
-            // ==========================================
-            // SALVA NO SQLITE
-            // ==========================================
-
             const idSala =
                 await criarSalaBanco(
                     roomCode,
-
                     usuario.idJogador,
-
                     true
                 );
 
-            // ==========================================
-            // COLOCA NA MEMÓRIA
-            // ==========================================
-
             const sala =
                 criarEstruturaSala({
+
                     idSala,
 
                     roomCode,
@@ -924,13 +872,13 @@ app.post(
             );
 
             console.log(
-                `Sala privada ${roomCode} criada via HTTP ` +
-                `e salva no SQLite.`
+                `Sala privada ${roomCode} criada via HTTP e salva no SQLite.`
             );
 
             return res
                 .status(201)
                 .json({
+
                     sucesso:
                         true,
 
@@ -938,6 +886,7 @@ app.post(
                         "Sala privada criada e persistida com sucesso.",
 
                     sala: {
+
                         idSala,
 
                         roomCode,
@@ -949,6 +898,7 @@ app.post(
                             "WAITING",
 
                         host: {
+
                             idJogador:
                                 usuario.idJogador,
 
@@ -968,6 +918,7 @@ app.post(
             return res
                 .status(500)
                 .json({
+
                     sucesso:
                         false,
 
@@ -977,10 +928,6 @@ app.post(
         }
     }
 );
-
-// ======================================================
-// GET - SALAS PÚBLICAS
-// ======================================================
 
 app.get(
     "/api/salas/publicas",
@@ -993,6 +940,7 @@ app.get(
                 await listarSalasPublicasBanco();
 
             return res.json({
+
                 total:
                     salas.length,
 
@@ -1009,6 +957,7 @@ app.get(
             return res
                 .status(500)
                 .json({
+
                     sucesso:
                         false,
 
@@ -1018,10 +967,6 @@ app.get(
         }
     }
 );
-
-// ======================================================
-// GET - TODAS AS SALAS
-// ======================================================
 
 app.get(
     "/api/salas",
@@ -1036,6 +981,7 @@ app.get(
                 await listarSalasBanco();
 
             return res.json({
+
                 total:
                     salas.length,
 
@@ -1052,6 +998,7 @@ app.get(
             return res
                 .status(500)
                 .json({
+
                     sucesso:
                         false,
 
@@ -1061,10 +1008,6 @@ app.get(
         }
     }
 );
-
-// ======================================================
-// GET - SALAS PRIVADAS
-// ======================================================
 
 app.get(
     "/api/salas/privadas",
@@ -1079,6 +1022,7 @@ app.get(
                 await listarSalasPrivadasBanco();
 
             return res.json({
+
                 total:
                     salas.length,
 
@@ -1095,6 +1039,7 @@ app.get(
             return res
                 .status(500)
                 .json({
+
                     sucesso:
                         false,
 
@@ -1104,10 +1049,6 @@ app.get(
         }
     }
 );
-
-// ======================================================
-// GET - SALA PELO CÓDIGO
-// ======================================================
 
 app.get(
     "/api/salas/:codigo",
@@ -1120,7 +1061,8 @@ app.get(
 
             const codigo =
                 String(
-                    req.params.codigo || ""
+                    req.params.codigo ||
+                    ""
                 )
                     .trim()
                     .toUpperCase();
@@ -1137,6 +1079,7 @@ app.get(
                 return res
                     .status(404)
                     .json({
+
                         sucesso:
                             false,
 
@@ -1146,6 +1089,7 @@ app.get(
             }
 
             return res.json({
+
                 sucesso:
                     true,
 
@@ -1162,6 +1106,7 @@ app.get(
             return res
                 .status(500)
                 .json({
+
                     sucesso:
                         false,
 
@@ -1219,7 +1164,7 @@ function enviarParaSala(
 }
 
 // ======================================================
-// SALAS PÚBLICAS NO WEBSOCKET
+// SALAS PÚBLICAS
 // ======================================================
 
 function obterSalasPublicas() {
@@ -1272,6 +1217,7 @@ function enviarListaSalasPublicas(
     enviar(
         ws,
         {
+
             type:
                 "ROOM_LIST_UPDATE",
 
@@ -1284,6 +1230,7 @@ function enviarListaSalasPublicas(
 function broadcastListaSalasPublicas() {
 
     const dados = {
+
         type:
             "ROOM_LIST_UPDATE",
 
@@ -1331,6 +1278,7 @@ function obterPlacarHostVisitante(
 ) {
 
     return {
+
         placarHost:
             sala.players[0]?.score ||
             0,
@@ -1403,6 +1351,7 @@ function iniciarCronometroTurno(
     enviarParaSala(
         sala,
         {
+
             type:
                 "TURN_TIMER",
 
@@ -1456,7 +1405,6 @@ function iniciarCronometroTurno(
 
                         await atualizarTurnoPartida(
                             sala.idPartida,
-
                             sala.currentTurn
                         );
 
@@ -1472,6 +1420,7 @@ function iniciarCronometroTurno(
                 enviarParaSala(
                     sala,
                     {
+
                         type:
                             "TURN_TIMEOUT",
 
@@ -1482,14 +1431,14 @@ function iniciarCronometroTurno(
                             sala.currentTurn,
 
                         message:
-                            `Tempo do jogador ` +
-                            `${jogadorQuePerdeuOTurno} esgotado.`
+                            `Tempo do jogador ${jogadorQuePerdeuOTurno} esgotado.`
                     }
                 );
 
                 enviarParaSala(
                     sala,
                     {
+
                         type:
                             "BOARD_UPDATE",
 
@@ -1502,8 +1451,7 @@ function iniciarCronometroTurno(
                 );
 
                 console.log(
-                    `Tempo do jogador ` +
-                    `${jogadorQuePerdeuOTurno} esgotado. ` +
+                    `Tempo do jogador ${jogadorQuePerdeuOTurno} esgotado. ` +
                     `Próximo turno: ${sala.currentTurn}`
                 );
 
@@ -1518,7 +1466,7 @@ function iniciarCronometroTurno(
 }
 
 // ======================================================
-// REGRAS
+// REGRAS DO JOGO
 // ======================================================
 
 function verificarVencedor(
@@ -1526,6 +1474,7 @@ function verificarVencedor(
 ) {
 
     const combinacoes = [
+
         [0, 1, 2],
         [3, 4, 5],
         [6, 7, 8],
@@ -1579,6 +1528,7 @@ function verificarEmpate(
 
 wss.on(
     "connection",
+
     (ws) => {
 
         console.log(
@@ -1600,6 +1550,7 @@ wss.on(
         enviar(
             ws,
             {
+
                 type:
                     "CONNECTED",
 
@@ -1681,6 +1632,7 @@ wss.on(
                             enviar(
                                 ws,
                                 {
+
                                     type:
                                         "ERROR",
 
@@ -1700,6 +1652,7 @@ wss.on(
                     enviar(
                         ws,
                         {
+
                             type:
                                 "ERROR",
 
@@ -1713,6 +1666,7 @@ wss.on(
 
         ws.on(
             "close",
+
             () => {
 
                 tratarDesconexao(
@@ -1757,6 +1711,7 @@ async function entrarNaSala(
         enviar(
             ws,
             {
+
                 type:
                     "ERROR",
 
@@ -1775,7 +1730,7 @@ async function entrarNaSala(
         let jogadorBanco;
 
         // ==================================================
-        // CRIAR PELO WEBSOCKET
+        // CRIAR SALA PELO WEBSOCKET
         // ==================================================
 
         if (
@@ -1813,14 +1768,13 @@ async function entrarNaSala(
             const idSala =
                 await criarSalaBanco(
                     roomCode,
-
                     jogadorBanco.id_jogador,
-
                     privada
                 );
 
             sala =
                 criarEstruturaSala({
+
                     idSala,
 
                     roomCode,
@@ -1840,8 +1794,7 @@ async function entrarNaSala(
             );
 
             console.log(
-                `Sala ${roomCode} criada no banco ` +
-                `com ID ${idSala}. ` +
+                `Sala ${roomCode} criada no banco com ID ${idSala}. ` +
                 `Privada: ${privada}`
             );
         }
@@ -1859,8 +1812,6 @@ async function entrarNaSala(
                     .trim()
                     .toUpperCase();
 
-            // Procura na memória.
-            // Se não existir, procura no SQLite.
             sala =
                 await buscarOuRecuperarSala(
                     roomCode
@@ -1873,6 +1824,7 @@ async function entrarNaSala(
                 enviar(
                     ws,
                     {
+
                         type:
                             "ROOM_NOT_FOUND",
 
@@ -1884,57 +1836,118 @@ async function entrarNaSala(
                 return;
             }
 
-            // ==========================================
-            // RECONEXÃO
-            // ==========================================
+            // ==================================================
+            // RECONEXÃO / TROCA DE SOCKET
+            // ==================================================
+            //
+            // Se o jogador já existe na sala, isso pode significar:
+            //
+            // 1. reconexão real
+            // 2. troca do WebSocket do lobby para jogo.html
+            //
+            // Nesse caso, não tratamos como terceiro jogador.
+            // Apenas substituímos o socket antigo pelo novo.
+            // ==================================================
 
-            const jogadorDesconectado =
+            const jogadorExistente =
                 sala.players.find(
                     (player) =>
-
                         player.name ===
-                            playerName &&
-
-                        !player.connected
+                        playerName
                 );
 
             if (
-                jogadorDesconectado
+                jogadorExistente
             ) {
 
+                const socketAntigo =
+                    jogadorExistente.socket;
+
+                // Primeiro assume o novo socket.
                 reconectarJogador(
                     ws,
                     sala,
-                    jogadorDesconectado
+                    jogadorExistente
                 );
+
+                // Depois encerra o antigo.
+                //
+                // Como jogador.socket já aponta para o novo,
+                // o close do antigo não será tratado
+                // como desconexão real.
+                if (
+                    socketAntigo &&
+                    socketAntigo !==
+                        ws &&
+                    (
+                        socketAntigo.readyState ===
+                            WebSocket.OPEN ||
+
+                        socketAntigo.readyState ===
+                            WebSocket.CONNECTING
+                    )
+                ) {
+
+                    try {
+
+                        socketAntigo.close(
+                            1000,
+
+                            "Conexao substituida pela pagina do jogo"
+                        );
+
+                    } catch (erro) {
+
+                        console.log(
+                            "Socket antigo já estava encerrado."
+                        );
+                    }
+                }
 
                 return;
             }
 
-            // Sala HTTP persistida:
-            // o host precisa entrar primeiro.
+            // ==================================================
+            // HOST PRECISA ESTAR PRESENTE
+            // ==================================================
+
             if (
-                sala.players.length ===
-                    0 &&
-
+                sala.private &&
                 sala.hostName &&
-
                 playerName !==
                     sala.hostName
             ) {
 
-                enviar(
-                    ws,
-                    {
-                        type:
-                            "ROOM_HOST_REQUIRED",
+                const hostNaSala =
+                    sala.players.find(
+                        (player) =>
 
-                        message:
-                            "Aguarde o host entrar na sala primeiro."
-                    }
-                );
+                            player.name ===
+                                sala.hostName ||
 
-                return;
+                            player.idJogador ===
+                                sala.hostId
+                    );
+
+                if (
+                    !hostNaSala ||
+                    !hostNaSala.connected
+                ) {
+
+                    enviar(
+                        ws,
+                        {
+
+                            type:
+                                "ROOM_HOST_REQUIRED",
+
+                            message:
+                                "Aguarde o host entrar na sala primeiro."
+                        }
+                    );
+
+                    return;
+                }
             }
 
             if (
@@ -1945,6 +1958,7 @@ async function entrarNaSala(
                 enviar(
                     ws,
                     {
+
                         type:
                             "ROOM_FULL",
 
@@ -1963,7 +1977,7 @@ async function entrarNaSala(
         }
 
         // ==================================================
-        // JOGADOR
+        // ADICIONAR JOGADOR
         // ==================================================
 
         const simbolo =
@@ -2008,7 +2022,6 @@ async function entrarNaSala(
                 playerName;
         }
 
-        // Segundo jogador
         if (
             sala.players.length ===
             1
@@ -2016,7 +2029,6 @@ async function entrarNaSala(
 
             await adicionarVisitanteSala(
                 sala.idSala,
-
                 jogadorBanco.id_jogador
             );
         }
@@ -2040,6 +2052,7 @@ async function entrarNaSala(
         enviar(
             ws,
             {
+
                 type:
                     "ROOM_JOINED",
 
@@ -2056,14 +2069,13 @@ async function entrarNaSala(
         );
 
         console.log(
-            `${playerName} entrou na sala ` +
-            `${roomCode} como ${simbolo}`
+            `${playerName} entrou na sala ${roomCode} como ${simbolo}`
         );
 
         broadcastListaSalasPublicas();
 
         // ==================================================
-        // INICIA PARTIDA
+        // INICIAR PARTIDA
         // ==================================================
 
         if (
@@ -2090,11 +2102,8 @@ async function entrarNaSala(
             sala.idPartida =
                 await criarPartida(
                     sala.idSala,
-
                     sala.currentTurn,
-
                     placarHost,
-
                     placarVisitante
                 );
 
@@ -2105,6 +2114,7 @@ async function entrarNaSala(
             enviarParaSala(
                 sala,
                 {
+
                     type:
                         "GAME_STARTED",
 
@@ -2116,6 +2126,7 @@ async function entrarNaSala(
                     players:
                         sala.players.map(
                             (player) => ({
+
                                 name:
                                     player.name,
 
@@ -2152,6 +2163,7 @@ async function entrarNaSala(
         enviar(
             ws,
             {
+
                 type:
                     "DATABASE_ERROR",
 
@@ -2184,6 +2196,7 @@ async function executarJogada(
         enviar(
             ws,
             {
+
                 type:
                     "INVALID_MOVE",
 
@@ -2202,7 +2215,6 @@ async function executarJogada(
 
     if (
         !sala ||
-
         sala.status !==
             "PLAYING"
     ) {
@@ -2210,6 +2222,7 @@ async function executarJogada(
         enviar(
             ws,
             {
+
                 type:
                     "INVALID_MOVE",
 
@@ -2231,6 +2244,7 @@ async function executarJogada(
         enviar(
             ws,
             {
+
                 type:
                     "INVALID_MOVE",
 
@@ -2253,6 +2267,7 @@ async function executarJogada(
         enviar(
             ws,
             {
+
                 type:
                     "INVALID_MOVE",
 
@@ -2277,6 +2292,7 @@ async function executarJogada(
         enviar(
             ws,
             {
+
                 type:
                     "INVALID_MOVE",
 
@@ -2289,13 +2305,15 @@ async function executarJogada(
     }
 
     if (
-        sala.board[position] !==
-        ""
+        sala.board[
+            position
+        ] !== ""
     ) {
 
         enviar(
             ws,
             {
+
                 type:
                     "INVALID_MOVE",
 
@@ -2311,18 +2329,17 @@ async function executarJogada(
         sala
     );
 
-    sala.board[position] =
+    sala.board[
+        position
+    ] =
         simboloJogador;
 
     try {
 
         await registrarJogada(
             sala.idPartida,
-
             ws.playerId,
-
             position,
-
             simboloJogador
         );
 
@@ -2333,7 +2350,9 @@ async function executarJogada(
 
     } catch (erro) {
 
-        sala.board[position] =
+        sala.board[
+            position
+        ] =
             "";
 
         iniciarCronometroTurno(
@@ -2348,6 +2367,7 @@ async function executarJogada(
         enviar(
             ws,
             {
+
                 type:
                     "DATABASE_ERROR",
 
@@ -2385,7 +2405,6 @@ async function executarJogada(
         const jogadorVencedor =
             sala.players.find(
                 (player) =>
-
                     player.symbol ===
                     vencedor
             );
@@ -2393,7 +2412,6 @@ async function executarJogada(
         const jogadorPerdedor =
             sala.players.find(
                 (player) =>
-
                     player !==
                     jogadorVencedor
             );
@@ -2431,19 +2449,14 @@ async function executarJogada(
 
             await finalizarPartida(
                 sala.idPartida,
-
                 jogadorVencedor.idJogador,
-
                 statusResultado,
-
                 placarHost,
-
                 placarVisitante
             );
 
             await registrarVitoriaDerrota(
                 jogadorVencedor.idJogador,
-
                 jogadorPerdedor.idJogador
             );
 
@@ -2458,6 +2471,7 @@ async function executarJogada(
         enviarParaSala(
             sala,
             {
+
                 type:
                     "BOARD_UPDATE",
 
@@ -2472,6 +2486,7 @@ async function executarJogada(
         enviarParaSala(
             sala,
             {
+
                 type:
                     "GAME_OVER",
 
@@ -2494,6 +2509,7 @@ async function executarJogada(
         enviarParaSala(
             sala,
             {
+
                 type:
                     "SCORE_UPDATE",
 
@@ -2505,9 +2521,7 @@ async function executarJogada(
         );
 
         console.log(
-            `Fim de jogo! ` +
-            `${jogadorVencedor.name} venceu ` +
-            `com ${vencedor}.`
+            `Fim de jogo! ${jogadorVencedor.name} venceu com ${vencedor}.`
         );
 
         return;
@@ -2550,13 +2564,9 @@ async function executarJogada(
 
             await finalizarPartida(
                 sala.idPartida,
-
                 null,
-
                 "EMPATE",
-
                 placarHost,
-
                 placarVisitante
             );
 
@@ -2571,6 +2581,7 @@ async function executarJogada(
         enviarParaSala(
             sala,
             {
+
                 type:
                     "BOARD_UPDATE",
 
@@ -2585,6 +2596,7 @@ async function executarJogada(
         enviarParaSala(
             sala,
             {
+
                 type:
                     "GAME_OVER",
 
@@ -2607,6 +2619,7 @@ async function executarJogada(
         enviarParaSala(
             sala,
             {
+
                 type:
                     "SCORE_UPDATE",
 
@@ -2638,7 +2651,6 @@ async function executarJogada(
 
         await atualizarTurnoPartida(
             sala.idPartida,
-
             sala.currentTurn
         );
 
@@ -2653,6 +2665,7 @@ async function executarJogada(
     enviarParaSala(
         sala,
         {
+
             type:
                 "BOARD_UPDATE",
 
@@ -2692,6 +2705,7 @@ async function enviarMensagemChat(
         enviar(
             ws,
             {
+
                 type:
                     "CHAT_ERROR",
 
@@ -2715,6 +2729,7 @@ async function enviarMensagemChat(
         enviar(
             ws,
             {
+
                 type:
                     "CHAT_ERROR",
 
@@ -2739,6 +2754,7 @@ async function enviarMensagemChat(
         enviar(
             ws,
             {
+
                 type:
                     "CHAT_ERROR",
 
@@ -2754,9 +2770,7 @@ async function enviarMensagemChat(
 
         await registrarMensagemChat(
             sala.idSala,
-
             ws.playerId,
-
             texto
         );
 
@@ -2770,6 +2784,7 @@ async function enviarMensagemChat(
         enviar(
             ws,
             {
+
                 type:
                     "CHAT_ERROR",
 
@@ -2784,6 +2799,7 @@ async function enviarMensagemChat(
     enviarParaSala(
         sala,
         {
+
             type:
                 "CHAT_MESSAGE",
 
@@ -2799,8 +2815,7 @@ async function enviarMensagemChat(
     );
 
     console.log(
-        `[CHAT ${roomCode}] ` +
-        `${ws.playerName}: ${texto}`
+        `[CHAT ${roomCode}] ${ws.playerName}: ${texto}`
     );
 }
 
@@ -2822,6 +2837,7 @@ async function solicitarRevanche(
         enviar(
             ws,
             {
+
                 type:
                     "NEW_GAME_ERROR",
 
@@ -2845,6 +2861,7 @@ async function solicitarRevanche(
         enviar(
             ws,
             {
+
                 type:
                     "NEW_GAME_ERROR",
 
@@ -2864,6 +2881,7 @@ async function solicitarRevanche(
         enviar(
             ws,
             {
+
                 type:
                     "NEW_GAME_ERROR",
 
@@ -2883,6 +2901,7 @@ async function solicitarRevanche(
         enviar(
             ws,
             {
+
                 type:
                     "NEW_GAME_ERROR",
 
@@ -2894,22 +2913,23 @@ async function solicitarRevanche(
         return;
     }
 
-    sala.rematchRequests
-        .add(ws);
+    sala.rematchRequests.add(
+        ws
+    );
 
     console.log(
-        `${ws.playerName} solicitou revanche ` +
-        `na sala ${roomCode}`
+        `${ws.playerName} solicitou revanche na sala ${roomCode}`
     );
 
     if (
-        sala.rematchRequests
-            .size === 1
+        sala.rematchRequests.size ===
+        1
     ) {
 
         enviarParaSala(
             sala,
             {
+
                 type:
                     "REMATCH_REQUESTED",
 
@@ -2925,8 +2945,8 @@ async function solicitarRevanche(
     }
 
     if (
-        sala.rematchRequests
-            .size === 2
+        sala.rematchRequests.size ===
+        2
     ) {
 
         await iniciarNovaPartida(
@@ -2996,11 +3016,8 @@ async function iniciarNovaPartida(
         sala.idPartida =
             await criarPartida(
                 sala.idSala,
-
                 sala.currentTurn,
-
                 placarHost,
-
                 placarVisitante
             );
 
@@ -3018,6 +3035,7 @@ async function iniciarNovaPartida(
         enviarParaSala(
             sala,
             {
+
                 type:
                     "DATABASE_ERROR",
 
@@ -3032,6 +3050,7 @@ async function iniciarNovaPartida(
     enviarParaSala(
         sala,
         {
+
             type:
                 "NEW_GAME_STARTED",
 
@@ -3047,6 +3066,7 @@ async function iniciarNovaPartida(
             players:
                 sala.players.map(
                     (player) => ({
+
                         name:
                             player.name,
 
@@ -3108,14 +3128,16 @@ async function tratarDesconexao(
     const jogador =
         sala.players.find(
             (player) =>
-
                 player.socket ===
                 ws
         );
 
+    // Se o socket antigo foi substituído,
+    // ele não estará mais em player.socket.
+    //
+    // Assim o servidor ignora o close antigo.
     if (
         !jogador ||
-
         !jogador.connected
     ) {
 
@@ -3129,8 +3151,7 @@ async function tratarDesconexao(
         null;
 
     console.log(
-        `${jogador.name} desconectou ` +
-        `da sala ${roomCode}`
+        `${jogador.name} desconectou da sala ${roomCode}`
     );
 
     // ==================================================
@@ -3141,15 +3162,6 @@ async function tratarDesconexao(
         sala.status ===
         "WAITING"
     ) {
-
-        // ==============================================
-        // PRIVADA
-        // ==============================================
-        //
-        // NÃO APAGA.
-        //
-        // Assim ela continua persistida no SQLite.
-        //
 
         if (
             sala.private
@@ -3162,13 +3174,6 @@ async function tratarDesconexao(
 
             return;
         }
-
-        // ==============================================
-        // PÚBLICA
-        // ==============================================
-        //
-        // Mantém comportamento antigo.
-        //
 
         rooms.delete(
             roomCode
@@ -3212,6 +3217,7 @@ async function tratarDesconexao(
     enviarParaSala(
         sala,
         {
+
             type:
                 "PLAYER_DISCONNECTED",
 
@@ -3256,7 +3262,7 @@ async function tratarDesconexao(
 }
 
 // ======================================================
-// RECONEXÃO
+// RECONEXÃO / TROCA DE SOCKET
 // ======================================================
 
 function reconectarJogador(
@@ -3298,6 +3304,7 @@ function reconectarJogador(
     enviar(
         ws,
         {
+
             type:
                 "ROOM_RECONNECTED",
 
@@ -3327,6 +3334,7 @@ function reconectarJogador(
             players:
                 sala.players.map(
                     (player) => ({
+
                         name:
                             player.name,
 
@@ -3343,6 +3351,7 @@ function reconectarJogador(
     enviarParaSala(
         sala,
         {
+
             type:
                 "PLAYER_RECONNECTED",
 
@@ -3358,8 +3367,7 @@ function reconectarJogador(
     );
 
     console.log(
-        `${jogador.name} reconectou ` +
-        `na sala ${sala.code}`
+        `${jogador.name} reconectou na sala ${sala.code}`
     );
 
     if (
@@ -3430,8 +3438,7 @@ async function finalizarPorWO(
     ) {
 
         console.log(
-            `Partida da sala ${sala.code} ` +
-            `encerrada sem vencedor.`
+            `Partida da sala ${sala.code} encerrada sem vencedor.`
         );
 
         return;
@@ -3464,19 +3471,14 @@ async function finalizarPorWO(
 
         await finalizarPartida(
             sala.idPartida,
-
             vencedor.idJogador,
-
             statusResultado,
-
             placarHost,
-
             placarVisitante
         );
 
         await registrarVitoriaDerrota(
             vencedor.idJogador,
-
             jogadorDesconectado.idJogador
         );
 
@@ -3491,6 +3493,7 @@ async function finalizarPorWO(
     enviarParaSala(
         sala,
         {
+
             type:
                 "GAME_OVER",
 
@@ -3516,6 +3519,7 @@ async function finalizarPorWO(
     enviarParaSala(
         sala,
         {
+
             type:
                 "SCORE_UPDATE",
 
@@ -3527,9 +3531,8 @@ async function finalizarPorWO(
     );
 
     console.log(
-        `${vencedor.name} venceu por W.O. ` +
-        `após desconexão de ` +
-        `${jogadorDesconectado.name}.`
+        `${vencedor.name} venceu por W.O. após desconexão ` +
+        `de ${jogadorDesconectado.name}.`
     );
 }
 
@@ -3542,8 +3545,6 @@ inicializarBanco()
     .then(
         async () => {
 
-            // Recupera salas privadas salvas
-            // anteriormente no SQLite.
             await recuperarSalasPrivadasPersistidas();
 
             server.listen(
@@ -3584,3 +3585,4 @@ inicializarBanco()
             );
         }
     );
+    

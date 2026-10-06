@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jogo da Velha - Lobby</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main>
+    <p id="status-conexao">Verificando sessão...</p>
+
+    <section id="tela-lobby">
+      <header class="topo-lobby">
+        <h1>Jogo da Velha</h1>
+        <div class="usuario-logado">
+          <span id="nome-usuario-logado"></span>
+          <button id="btn-logout" type="button">Sair</button>
+        </div>
+      </header>
+
+      <div class="campos">
+        <label for="input-codigo">Código da sala</label>
+        <input id="input-codigo" type="text" maxlength="10" placeholder="Ex.: AB12CD">
+        <small>Digite o código de uma sala para entrar.</small>
+      </div>
+
+      <div id="area-sala" hidden>
+        <p>Código da sua sala:</p>
+        <strong id="codigo-sala"></strong>
+        <p>Envie o código para o outro jogador e aguarde.</p>
+      </div>
+
+      <p id="msg-lobby"></p>
+
+      <div class="botoes">
+        <button id="btn-criar" type="button">Criar sala privada</button>
+        <button id="btn-entrar" type="button">Entrar por código</button>
+      </div>
+
+      <div class="salas-publicas">
+        <h2>Salas públicas abertas</h2>
+        <ul id="lista-salas-publicas"></ul>
+        <p id="msg-salas-publicas" class="vazio">Nenhuma sala pública no momento.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="js/lobby.js"></script>
+</body>
+</html>

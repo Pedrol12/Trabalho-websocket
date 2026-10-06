@@ -1,7 +1,3 @@
-// ======================================================
-// ELEMENTOS
-// ======================================================
-
 const btnAbaLogin =
     document.getElementById(
         "btnAbaLogin"
@@ -287,14 +283,8 @@ formCadastro.addEventListener(
                 return;
             }
 
-            mostrarUsuarioLogado(
-                dados.usuario
-            );
-
-            mostrarMensagem(
-                "Conta criada com sucesso!",
-                "sucesso"
-            );
+             window.location.href = "/lobby.html";
+            return;
 
         } catch (erro) {
 
@@ -398,14 +388,8 @@ formLogin.addEventListener(
                 return;
             }
 
-            mostrarUsuarioLogado(
-                dados.usuario
-            );
-
-            mostrarMensagem(
-                "Login realizado com sucesso!",
-                "sucesso"
-            );
+            window.location.href = "/lobby.html";
+            return;
 
         } catch (erro) {
 
@@ -597,18 +581,15 @@ async function verificarSessaoInicial() {
         const dados =
             await resposta.json();
 
-        if (
+                if (
             resposta.ok &&
             dados.autenticado
         ) {
 
-            mostrarUsuarioLogado(
-                dados.usuario
-            );
-
+            window.location.href = "/lobby.html";
             return;
         }
-
+        
         abrirLogin();
 
     } catch (erro) {

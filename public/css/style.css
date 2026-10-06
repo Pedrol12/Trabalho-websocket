@@ -227,3 +227,117 @@ button:focus-visible { outline: 3px solid #0e7c86; outline-offset: 2px; }
 
 .modal-caixa h2 { margin: 0; font-size: 2rem; }
 .modal-caixa p { margin: 0; color: #5b6b7a; }
+
+/* ---------- Lobby: topo e usuario ---------- */
+.topo-lobby {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.topo-lobby h1 { margin: 0; font-size: 1.8rem; text-align: left; }
+
+.usuario-logado {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: bold;
+  font-size: 0.9rem;
+}
+.usuario-logado button {
+  padding: 8px 12px;
+  font-size: 0.85rem;
+}
+
+.salas-publicas h2 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+.salas-publicas ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.salas-publicas li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 2px solid #c9d3dc;
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+.salas-publicas li button {
+  padding: 8px 14px;
+  font-size: 0.9rem;
+}
+.salas-publicas .vazio {
+  color: #5b6b7a;
+  font-size: 0.9rem;
+}
+
+/* ---------- Placar, chat e desconexao ---------- */
+.placar {
+  margin-left: 4px;
+  font-size: 0.9rem;
+  color: #5b6b7a;
+}
+
+#cronometro {
+  margin: -8px 0 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: #5b6b7a;
+}
+
+#aviso-desconexao {
+  background: #fef3c7;
+  border: 2px solid #d97706;
+  border-radius: 10px;
+  padding: 10px 14px;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+#btn-sair-jogo {
+  align-self: center;
+}
+
+.chat {
+  border: 2px solid #c9d3dc;
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#chat-mensagens {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 160px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+#chat-mensagens strong.x { color: #d23f2e; }
+#chat-mensagens strong.o { color: #0e7c86; }
+
+#form-chat {
+  display: flex;
+  gap: 8px;
+}
+#form-chat input {
+  flex: 1;
+  font-size: 0.95rem;
+  padding: 8px 10px;
+}
+#form-chat button {
+  font-size: 0.95rem;
+  padding: 8px 14px;
+}
