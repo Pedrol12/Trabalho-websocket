@@ -3,52 +3,29 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Jogo da Velha Multiplayer</title>
+  <title>Jogo da Velha - Partida</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <main>
-    <p id="status-conexao">Conectando ao servidor...</p>
+    <p id="status-conexao">Conectando...</p>
 
-    <section id="tela-lobby">
-      <h1>Jogo da Velha</h1>
-
-      <div class="campos">
-        <label for="input-nome">Seu apelido</label>
-        <input id="input-nome" type="text" maxlength="20" placeholder="Ex.: Pedro">
-
-        <label for="input-codigo">Código da sala</label>
-        <input id="input-codigo" type="text" maxlength="10" placeholder="Ex.: AB12">
-        <small>Para entrar em uma sala, digite o código. Para criar uma nova, deixe em branco.</small>
-      </div>
-
-      <div id="area-sala" hidden>
-        <p>Código da sua sala:</p>
-        <strong id="codigo-sala"></strong>
-        <p>Envie o código para o outro jogador e aguarde.</p>
-      </div>
-
-      <p id="msg-lobby"></p>
-
-      <div class="botoes">
-        <button id="btn-criar" type="button">Criar sala</button>
-        <button id="btn-entrar" type="button">Entrar por código</button>
-      </div>
-    </section>
-
-    <section id="tela-arena" hidden>
+    <section id="tela-arena">
       <div class="jogadores">
         <div class="jogador">
           <span class="simbolo x">X</span>
           <span id="nome-x">-</span>
+          <span id="placar-x" class="placar"></span>
         </div>
         <div class="jogador">
           <span class="simbolo o">O</span>
           <span id="nome-o">-</span>
+          <span id="placar-o" class="placar"></span>
         </div>
       </div>
 
       <p id="indicador-turno">Aguardando...</p>
+      <p id="cronometro"></p>
 
       <div id="tabuleiro">
         <button type="button" class="celula" data-pos="0"></button>
@@ -64,9 +41,21 @@
 
       <p id="msg-arena"></p>
       <p id="info-sala">Sala <strong id="arena-codigo"></strong> · você joga com <strong id="arena-simbolo"></strong></p>
+
+      <div id="aviso-desconexao" hidden></div>
+
+      <div class="chat">
+        <ul id="chat-mensagens"></ul>
+        <form id="form-chat">
+          <input id="input-chat" type="text" maxlength="200" placeholder="Digite uma mensagem..." autocomplete="off">
+          <button type="submit">Enviar</button>
+        </form>
+      </div>
+
+      <button id="btn-sair-jogo" type="button">Voltar ao lobby</button>
     </section>
 
-        <div id="modal-fim" hidden>
+    <div id="modal-fim" hidden>
       <div class="modal-caixa">
         <h2 id="fim-titulo"></h2>
         <p id="fim-detalhe"></p>
@@ -77,6 +66,6 @@
     </div>
   </main>
 
-  <script src="js/websocket.js"></script>
+  <script src="js/jogo.js"></script>
 </body>
 </html>

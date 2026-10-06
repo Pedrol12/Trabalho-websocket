@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Jogo da Velha - Login</title>
+
+    <link
+        rel="stylesheet"
+        href="login.css"
+    >
+</head>
+
+<body>
+
+    <main class="pagina-login">
+
+        <section class="card-login">
+
+            <header class="cabecalho">
+
+                <div class="icone-jogo">
+                    #
+                </div>
+
+                <h1>
+                    Jogo da Velha
+                </h1>
+
+                <p>
+                    Entre na sua conta para acessar o jogo
+                </p>
+
+            </header>
+
+            <!-- ABAS -->
+
+            <div class="abas">
+
+                <button
+                    id="btnAbaLogin"
+                    class="aba ativa"
+                    type="button"
+                >
+                    Entrar
+                </button>
+
+                <button
+                    id="btnAbaCadastro"
+                    class="aba"
+                    type="button"
+                >
+                    Criar conta
+                </button>
+
+            </div>
+
+            <!-- MENSAGEM -->
+
+            <div
+                id="mensagem"
+                class="mensagem escondido"
+            ></div>
+
+            <!-- ====================================== -->
+            <!-- LOGIN -->
+            <!-- ====================================== -->
+
+            <form
+                id="formLogin"
+                class="formulario"
+            >
+
+                <div class="campo">
+
+                    <label for="loginEmail">
+                        E-mail
+                    </label>
+
+                    <input
+                        id="loginEmail"
+                        name="email"
+                        type="email"
+                        autocomplete="email"
+                        placeholder="seu@email.com"
+                        required
+                    >
+
+                </div>
+
+                <div class="campo">
+
+                    <label for="loginSenha">
+                        Senha
+                    </label>
+
+                    <input
+                        id="loginSenha"
+                        name="senha"
+                        type="password"
+                        autocomplete="current-password"
+                        placeholder="Digite sua senha"
+                        minlength="6"
+                        required
+                    >
+
+                </div>
+
+                <button
+                    id="btnLogin"
+                    class="botao-principal"
+                    type="submit"
+                >
+                    Entrar
+                </button>
+
+            </form>
+
+            <!-- ====================================== -->
+            <!-- CADASTRO -->
+            <!-- ====================================== -->
+
+            <form
+                id="formCadastro"
+                class="formulario escondido"
+            >
+
+                <div class="campo">
+
+                    <label for="cadastroNickname">
+                        Nickname
+                    </label>
+
+                    <input
+                        id="cadastroNickname"
+                        name="nickname"
+                        type="text"
+                        autocomplete="nickname"
+                        placeholder="Seu nome no jogo"
+                        minlength="2"
+                        maxlength="40"
+                        required
+                    >
+
+                </div>
+
+                <div class="campo">
+
+                    <label for="cadastroEmail">
+                        E-mail
+                    </label>
+
+                    <input
+                        id="cadastroEmail"
+                        name="email"
+                        type="email"
+                        autocomplete="email"
+                        placeholder="seu@email.com"
+                        required
+                    >
+
+                </div>
+
+                <div class="campo">
+
+                    <label for="cadastroSenha">
+                        Senha
+                    </label>
+
+                    <input
+                        id="cadastroSenha"
+                        name="senha"
+                        type="password"
+                        autocomplete="new-password"
+                        placeholder="Mínimo de 6 caracteres"
+                        minlength="6"
+                        required
+                    >
+
+                </div>
+
+                <div class="campo">
+
+                    <label for="cadastroConfirmarSenha">
+                        Confirmar senha
+                    </label>
+
+                    <input
+                        id="cadastroConfirmarSenha"
+                        type="password"
+                        autocomplete="new-password"
+                        placeholder="Digite novamente"
+                        minlength="6"
+                        required
+                    >
+
+                </div>
+
+                <button
+                    id="btnCadastro"
+                    class="botao-principal"
+                    type="submit"
+                >
+                    Criar conta
+                </button>
+
+            </form>
+
+            <!-- ====================================== -->
+            <!-- USUÁRIO LOGADO -->
+            <!-- ====================================== -->
+
+            <section
+                id="areaLogado"
+                class="area-logado escondido"
+            >
+
+                <div class="status-online">
+                    ● Autenticado
+                </div>
+
+                <h2>
+                    Login realizado!
+                </h2>
+
+                <p>
+                    Bem-vindo,
+                    <strong id="nomeUsuario"></strong>.
+                </p>
+
+                <p class="email-logado">
+                    <span id="emailUsuario"></span>
+                </p>
+
+                <div class="acoes-logado">
+
+                    <button
+                        id="btnTestarSessao"
+                        class="botao-secundario"
+                        type="button"
+                    >
+                        Verificar sessão
+                    </button>
+
+                    <button
+                        id="btnLogout"
+                        class="botao-perigo"
+                        type="button"
+                    >
+                        Sair
+                    </button>
+
+                </div>
+
+                <p class="observacao">
+                    O acesso ao lobby será conectado
+                    ao frontend na próxima etapa.
+                </p>
+
+            </section>
+
+        </section>
+
+    </main>
+
+    <script src="login.js"></script>
+
+</body>
+</html>
