@@ -1,5 +1,5 @@
 
- // Cria o serviço responsável pelos eventos WebSocket
+ // Cria os eventos do WebSocket
 function criarEventosWebSocket({
     wss,
     enviar,
@@ -8,48 +8,35 @@ function criarEventosWebSocket({
     executarJogada,
     enviarMensagemChat,
     solicitarRevanche,
-    tratarDesconexao
+    tratarDesconexao,
+    sairVoluntariamente
 }) {
-
     // Configura a conexão dos jogadores
     function configurarEventos() {
-
         wss.on("connection", (ws) => {
+            console.log("Novo jogador conectado via WebSocket!");
 
-            console.log(
-                "Novo jogador conectado via WebSocket!"
-            );
-
-            // Inicializa os dados da conexão
+            // Inicializa os dados do jogador
             ws.roomCode = null;
             ws.playerName = null;
             ws.playerSymbol = null;
             ws.playerId = null;
 
-            // Confirma a conexão com o servidor
             enviar(ws, {
                 type: "CONNECTED",
                 message: "Conectado ao servidor WebSocket!"
             });
 
-            // Envia a lista inicial de salas públicas
             enviarListaSalasPublicas(ws);
 
-            // Recebe e processa mensagens dos jogadores
+            // Processa as mensagens recebidas
             ws.on("message", async (data) => {
                 try {
-                    const mensagem = JSON.parse(
-                        data.toString()
-                    );
+                    const mensagem = JSON.parse(data.toString());
 
-                    console.log(
-                        "Mensagem recebida:",
-                        mensagem
-                    );
+                    console.log("Mensagem recebida:", mensagem);
 
-                    // Direciona a mensagem para o serviço correto
                     switch (mensagem.type) {
-
                         case "JOIN_ROOM":
                             await entrarNaSala(ws, mensagem);
                             break;
@@ -70,14 +57,17 @@ function criarEventosWebSocket({
                             await solicitarRevanche(ws);
                             break;
 
+                        // Trata a saída voluntária
+                        case "LEAVE_ROOM":
+                            await sairVoluntariamente(ws);
+                            break;
+
                         default:
                             enviar(ws, {
                                 type: "ERROR",
-                                message:
-                                    "Tipo de mensagem desconhecido."
+                                message: "Tipo de mensagem desconhecido."
                             });
                     }
-
                 } catch (erro) {
                     console.error(
                         "Erro ao processar mensagem:",
@@ -86,13 +76,12 @@ function criarEventosWebSocket({
 
                     enviar(ws, {
                         type: "ERROR",
-                        message:
-                            "Não foi possível processar a mensagem."
+                        message: "Não foi possível processar a mensagem."
                     });
                 }
             });
 
-            // Trata a desconexão dos jogadores
+            // Trata a queda de conexão
             ws.on("close", () => {
                 tratarDesconexao(ws).catch((erro) => {
                     console.error(
@@ -104,7 +93,6 @@ function criarEventosWebSocket({
         });
     }
 
-    // Disponibiliza a configuração dos eventos
     return {
         configurarEventos
     };

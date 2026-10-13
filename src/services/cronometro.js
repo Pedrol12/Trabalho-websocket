@@ -6,14 +6,40 @@ function criarServicoCronometro({
     atualizarTurnoPartida
 }) {
 
-    // Cancela o cronômetro do turno atual
+    // Cancela os cronômetros do turno
     function cancelarCronometroTurno(sala) {
         if (sala.turnTimer) {
             clearTimeout(sala.turnTimer);
             sala.turnTimer = null;
         }
 
+        if (sala.turnInterval) {
+            clearInterval(sala.turnInterval);
+            sala.turnInterval = null;
+        }
+
         sala.turnDeadline = null;
+    }
+
+    // Envia o tempo restante
+    function enviarTempoRestante(sala) {
+        if (!sala.turnDeadline) {
+            return;
+        }
+
+        const tempoRestante = Math.max(
+            0,
+            Math.ceil(
+                (sala.turnDeadline - Date.now()) / 1000
+            )
+        );
+
+        enviarParaSala(sala, {
+            type: "TURN_TIMER",
+            currentTurn: sala.currentTurn,
+            seconds: tempoRestante,
+            deadline: sala.turnDeadline
+        });
     }
 
     // Inicia o cronômetro do turno
@@ -28,7 +54,7 @@ function criarServicoCronometro({
             return;
         }
 
-        // Verifica se todos os jogadores estão conectados
+        // Verifica se todos estão conectados
         if (
             sala.players.some(player => !player.connected)
         ) {
@@ -37,38 +63,49 @@ function criarServicoCronometro({
 
         const simboloDoTurno = sala.currentTurn;
 
-        // Define o prazo para finalizar o turno
+        // Define o tempo limite
         sala.turnDeadline = Date.now() + tempoTurnoMs;
 
-        // Envia o tempo do turno para os jogadores
-        enviarParaSala(sala, {
-            type: "TURN_TIMER",
-            currentTurn: simboloDoTurno,
-            seconds: tempoTurnoMs / 1000,
-            deadline: sala.turnDeadline
-        });
+        // Mostra o tempo inicial
+        enviarTempoRestante(sala);
 
-        // Executa quando o tempo do turno acaba
+        // Atualiza o contador a cada segundo
+        sala.turnInterval = setInterval(() => {
+            if (
+                sala.status !== "PLAYING" ||
+                sala.currentTurn !== simboloDoTurno ||
+                sala.players.some(player => !player.connected)
+            ) {
+                cancelarCronometroTurno(sala);
+                return;
+            }
+
+            enviarTempoRestante(sala);
+        }, 1000);
+
+        // Executa quando o tempo acaba
         sala.turnTimer = setTimeout(async () => {
 
             // Verifica se o turno ainda é válido
             if (
                 sala.status !== "PLAYING" ||
-                sala.currentTurn !== simboloDoTurno
+                sala.currentTurn !== simboloDoTurno ||
+                sala.players.some(player => !player.connected)
             ) {
+                cancelarCronometroTurno(sala);
                 return;
             }
 
+            // Encerra o contador atual
+            cancelarCronometroTurno(sala);
+
             const jogadorQuePerdeuOTurno = simboloDoTurno;
 
-            // Passa o turno para o outro jogador
+            // Passa a vez para o outro jogador
             sala.currentTurn =
                 jogadorQuePerdeuOTurno === "X" ? "O" : "X";
 
-            sala.turnTimer = null;
-            sala.turnDeadline = null;
-
-            // Atualiza o turno no banco de dados
+            // Atualiza o turno no banco
             if (sala.idPartida) {
                 try {
                     await atualizarTurnoPartida(
@@ -83,7 +120,7 @@ function criarServicoCronometro({
                 }
             }
 
-            // Informa que o tempo do jogador acabou
+            // Informa que o tempo acabou
             enviarParaSala(sala, {
                 type: "TURN_TIMEOUT",
                 timedOutSymbol: jogadorQuePerdeuOTurno,
@@ -92,7 +129,7 @@ function criarServicoCronometro({
                     `Tempo do jogador ${jogadorQuePerdeuOTurno} esgotado.`
             });
 
-            // Atualiza o tabuleiro para os jogadores
+            // Atualiza o tabuleiro
             enviarParaSala(sala, {
                 type: "BOARD_UPDATE",
                 board: sala.board,
@@ -104,20 +141,20 @@ function criarServicoCronometro({
                 `Próximo turno: ${sala.currentTurn}`
             );
 
-            // Inicia o cronômetro do próximo jogador
+            // Inicia o próximo cronômetro
             iniciarCronometroTurno(sala);
 
         }, tempoTurnoMs);
     }
 
-    // Disponibiliza as funções do serviço
+    // Exporta as funções do serviço
     return {
         cancelarCronometroTurno,
         iniciarCronometroTurno
     };
 }
 
-// Exporta o módulo de cronômetro
+// Exporta o módulo
 module.exports = {
     criarServicoCronometro
 };

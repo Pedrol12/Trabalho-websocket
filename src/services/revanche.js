@@ -45,6 +45,33 @@ function criarServicoRevanche({
             return;
         }
 
+        // Impede revanche com jogador desconectado
+        if (
+            sala.players.length !== 2 ||
+            sala.players.some(player => !player.connected)
+        ) {
+            enviar(ws, {
+                type: "NEW_GAME_ERROR",
+                message: "O outro jogador saiu da sala."
+            });
+            return;
+        }
+
+        // Confirma que o pedido veio de um jogador da sala
+        const jogador = sala.players.find(
+            player =>
+                player.socket === ws &&
+                player.connected
+        );
+
+        if (!jogador) {
+            enviar(ws, {
+                type: "NEW_GAME_ERROR",
+                message: "Você não está conectado a esta sala."
+            });
+            return;
+        }
+
         // Impede solicitações duplicadas
         if (sala.rematchRequests.has(ws)) {
             enviar(ws, {

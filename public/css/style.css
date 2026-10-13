@@ -341,3 +341,41 @@ button:focus-visible { outline: 3px solid #0e7c86; outline-offset: 2px; }
   font-size: 0.95rem;
   padding: 8px 14px;
 }
+
+
+/* Código da sala */
+.codigo-sala-acoes {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+#codigo-sala {
+    font-size: 2rem;
+    letter-spacing: 0.15em;
+    color: #0e7c86;
+}
+
+#btn-copiar-codigo {
+    padding: 10px 16px;
+    border: 2px solid #0e7c86;
+    border-radius: 10px;
+    background: #ffffff;
+    color: #0e7c86;
+    font-size: 0.9rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+}
+
+#btn-copiar-codigo:hover {
+    background: #0e7c86;
+    color: #ffffff;
+}
+
+#btn-copiar-codigo:focus-visible {
+    outline: 3px solid #17232f;
+    outline-offset: 2px;
+}

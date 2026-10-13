@@ -1,678 +1,164 @@
-// ======================================================
-// LOBBY
-// ======================================================
 
-// Usuário autenticado
+import {
+    criarSocketLobby,
+    enviarMensagem
+} from "./lobby/socket.js";
+
+import { criarServicoSalas } from "./lobby/salas.js";
+
+import {
+    criarTratadorEventosLobby
+} from "./lobby/eventos.js";
+
+const $ = (id) => document.getElementById(id);
+
 let usuario = null;
-
-// Sala atual
-let codigoDaSala = null;
-
-// WebSocket do lobby
 let socket = null;
 
-const $ = (id) =>
-  document.getElementById(id);
+// Prepara o gerenciamento das salas
+const salas = criarServicoSalas({
+    obterSocket: () => socket,
+    obterUsuario: () => usuario
+});
 
-// ======================================================
-// AUTENTICAÇÃO
-// ======================================================
+// Prepara os eventos WebSocket
+const tratarMensagemServidor = criarTratadorEventosLobby({
+    renderizarSalasPublicas: salas.renderizarSalasPublicas,
+    mostrarSalaEntrou: salas.mostrarSalaEntrou,
+    guardarSala: salas.guardarSala,
+    liberarBotoesLobby: salas.liberarBotoesLobby
+});
 
-// Confere se existe sessão ativa.
-// Se não existir, volta para o login.
+// Verifica a sessão do usuário
 async function verificarUsuario() {
+    try {
+        const resposta = await fetch("/api/auth/me", {
+            credentials: "include"
+        });
 
-  try {
-
-    const resposta =
-      await fetch(
-        "/api/auth/me",
-        {
-          credentials: "include"
+        if (!resposta.ok) {
+            window.location.href = "/login.html";
+            return null;
         }
-      );
 
-    if (!resposta.ok) {
+        const dados = await resposta.json();
+        return dados.usuario;
+    } catch (erro) {
+        console.error("Erro ao verificar usuário:", erro);
+        window.location.href = "/login.html";
+        return null;
+    }
+}
 
-      window.location.href =
-        "/login.html";
+// Configura a criação de sala privada
+$("btn-criar").addEventListener("click", async () => {
+    $("msg-lobby").textContent = "";
 
-      return null;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        $("msg-lobby").textContent =
+            "Aguarde a conexão com o servidor.";
+        return;
     }
 
-    const dados =
-      await resposta.json();
+    $("btn-criar").disabled = true;
 
-    return dados.usuario;
-
-  } catch (erro) {
-
-    console.error(
-      "Erro ao verificar usuário:",
-      erro
-    );
-
-    window.location.href =
-      "/login.html";
-
-    return null;
-  }
-}
-
-// ======================================================
-// WEBSOCKET
-// ======================================================
-
-function socketEstaAberto() {
-
-  return (
-    socket &&
-    socket.readyState ===
-      WebSocket.OPEN
-  );
-}
-
-// ======================================================
-// CRIAR SALA PRIVADA POR HTTP
-// ======================================================
-
-async function criarSalaPrivada() {
-
-  try {
-
-    const resposta =
-      await fetch(
-        "/api/salas/privadas",
-        {
-          method: "POST",
-
-          headers: {
-            "Content-Type":
-              "application/json"
-          },
-
-          credentials:
-            "include"
-        }
-      );
-
-    const dados =
-      await resposta.json();
-
-    if (!resposta.ok) {
-
-      console.error(dados);
-
-      $("msg-lobby").textContent =
-        dados.erro ||
-        "Não foi possível criar a sala.";
-
-      return null;
-    }
-
-    return dados.sala.roomCode;
-
-  } catch (erro) {
-
-    console.error(
-      "Erro ao criar sala:",
-      erro
-    );
-
-    $("msg-lobby").textContent =
-      "Não foi possível conectar ao servidor.";
-
-    return null;
-  }
-}
-
-// ======================================================
-// ENTRAR NA SALA
-// ======================================================
-
-function entrarNaSala(
-  roomCode
-) {
-
-  $("msg-lobby").textContent =
-    "";
-
-  if (!socketEstaAberto()) {
-
-    $("msg-lobby").textContent =
-      "A conexão com o servidor ainda não está pronta.";
-
-    return;
-  }
-
-  const codigo =
-    String(
-      roomCode || ""
-    )
-      .trim()
-      .toUpperCase();
-
-  if (!codigo) {
-
-    $("msg-lobby").textContent =
-      "Informe o código da sala.";
-
-    return;
-  }
-
-  socket.send(
-    JSON.stringify({
-      type:
-        "JOIN_ROOM",
-
-      playerName:
-        usuario.nickname,
-
-      roomCode:
-        codigo
-    })
-  );
-}
-
-// ======================================================
-// SALAS PÚBLICAS
-// ======================================================
-
-function renderizarSalasPublicas(
-  salas
-) {
-
-  const lista =
-    $("lista-salas-publicas");
-
-  const vazio =
-    $("msg-salas-publicas");
-
-  lista.innerHTML =
-    "";
-
-  if (
-    !salas ||
-    salas.length === 0
-  ) {
-
-    vazio.hidden =
-      false;
-
-    return;
-  }
-
-  vazio.hidden =
-    true;
-
-  salas.forEach(
-    (sala) => {
-
-      const item =
-        document.createElement(
-          "li"
-        );
-
-      const texto =
-        document.createElement(
-          "span"
-        );
-
-      texto.textContent =
-        `${sala.hostName || "Sala"} · ${sala.roomCode}`;
-
-      const botao =
-        document.createElement(
-          "button"
-        );
-
-      botao.type =
-        "button";
-
-      botao.textContent =
-        "Entrar";
-
-      botao.addEventListener(
-        "click",
-        () => {
-
-          entrarNaSala(
-            sala.roomCode
-          );
-        }
-      );
-
-      item.appendChild(
-        texto
-      );
-
-      item.appendChild(
-        botao
-      );
-
-      lista.appendChild(
-        item
-      );
-    }
-  );
-}
-
-// ======================================================
-// GUARDAR DADOS DA SALA
-// ======================================================
-
-function guardarSala(
-  roomCode
-) {
-
-  codigoDaSala =
-    roomCode;
-
-  sessionStorage.setItem(
-    "roomCode",
-    codigoDaSala
-  );
-
-  sessionStorage.setItem(
-    "playerName",
-    usuario.nickname
-  );
-}
-
-// ======================================================
-// SALA CRIADA / ENTRADA CONFIRMADA
-// ======================================================
-
-function mostrarSalaEntrou(
-  roomCode
-) {
-
-  guardarSala(
-    roomCode
-  );
-
-  $("codigo-sala").textContent =
-    codigoDaSala;
-
-  $("area-sala").hidden =
-    false;
-
-  $("btn-criar").disabled =
-    true;
-
-  $("btn-entrar").disabled =
-    true;
-
-  $("msg-lobby").textContent =
-    "Aguardando o outro jogador...";
-}
-
-// ======================================================
-// LIBERAR BOTÕES APÓS ERRO
-// ======================================================
-
-function liberarBotoesLobby() {
-
-  if ($("btn-criar")) {
-
-    $("btn-criar").disabled =
-      false;
-  }
-
-  if ($("btn-entrar")) {
-
-    $("btn-entrar").disabled =
-      false;
-  }
-}
-
-// ======================================================
-// BOTÃO CRIAR SALA PRIVADA
-// ======================================================
-
-$("btn-criar").addEventListener(
-  "click",
-
-  async () => {
-
-    $("msg-lobby").textContent =
-      "";
-
-    if (!socketEstaAberto()) {
-
-      $("msg-lobby").textContent =
-        "Aguarde a conexão com o servidor.";
-
-      return;
-    }
-
-    $("btn-criar").disabled =
-      true;
-
-    const codigo =
-      await criarSalaPrivada();
+    const codigo = await salas.criarSalaPrivada();
 
     if (!codigo) {
-
-      $("btn-criar").disabled =
-        false;
-
-      return;
+        $("btn-criar").disabled = false;
+        return;
     }
 
-    entrarNaSala(
-      codigo
-    );
-  }
-);
+    salas.entrarNaSala(codigo);
+});
 
-// ======================================================
-// ENTRAR POR CÓDIGO
-// ======================================================
-
-$("btn-entrar").addEventListener(
-  "click",
-
-  () => {
-
-    const codigo =
-      $("input-codigo")
-        .value
-        .trim()
-        .toUpperCase();
+// Configura a entrada por código
+$("btn-entrar").addEventListener("click", () => {
+    const codigo = $("input-codigo").value.trim().toUpperCase();
 
     if (!codigo) {
-
-      $("msg-lobby").textContent =
-        "Digite o código da sala.";
-
-      return;
+        $("msg-lobby").textContent =
+            "Digite o código da sala.";
+        return;
     }
 
-    entrarNaSala(
-      codigo
-    );
-  }
-);
+    salas.entrarNaSala(codigo);
+});
 
-// ======================================================
-// LOGOUT
-// ======================================================
+// Copia o código da sala
+$("btn-copiar-codigo").addEventListener("click", async () => {
+    const codigo = $("codigo-sala").textContent.trim();
+    const botao = $("btn-copiar-codigo");
 
-$("btn-logout").addEventListener(
-  "click",
-
-  async () => {
+    if (!codigo) {
+        return;
+    }
 
     try {
+        await navigator.clipboard.writeText(codigo);
 
-      await fetch(
-        "/api/auth/logout",
-        {
-          method:
-            "POST",
+        botao.textContent = "Copiado!";
 
-          credentials:
-            "include"
-        }
-      );
-
+        setTimeout(() => {
+            botao.textContent = "Copiar";
+        }, 2000);
     } catch (erro) {
+        console.error("Erro ao copiar código:", erro);
 
-      console.error(
-        "Erro no logout:",
-        erro
-      );
+        $("msg-lobby").textContent =
+            "Não foi possível copiar o código.";
+    }
+});
+
+// Configura o logout
+$("btn-logout").addEventListener("click", async () => {
+    try {
+        await fetch("/api/auth/logout", {
+            method: "POST",
+            credentials: "include"
+        });
+    } catch (erro) {
+        console.error("Erro no logout:", erro);
     }
 
-    sessionStorage.removeItem(
-      "roomCode"
-    );
+    sessionStorage.removeItem("roomCode");
+    sessionStorage.removeItem("playerName");
 
-    sessionStorage.removeItem(
-      "playerName"
-    );
+    window.location.href = "/login.html";
+});
 
-    window.location.href =
-      "/login.html";
-  }
-);
+// Inicializa o lobby
+async function inicializarLobby() {
+    usuario = await verificarUsuario();
 
-// ======================================================
-// INICIALIZAÇÃO
-// ======================================================
+    if (!usuario) {
+        return;
+    }
 
-(async () => {
+    $("nome-usuario-logado").textContent = usuario.nickname;
 
-  usuario =
-    await verificarUsuario();
+    socket = criarSocketLobby({
+        aoAbrir: (conexao) => {
+            $("status-conexao").textContent = "Conectado";
 
-  if (!usuario) {
+            salas.liberarBotoesLobby();
 
-    return;
-  }
+            enviarMensagem(conexao, {
+                type: "LIST_ROOMS"
+            });
+        },
 
-  $("nome-usuario-logado")
-    .textContent =
-      usuario.nickname;
+        aoMensagem: tratarMensagemServidor,
 
-  // ====================================================
-  // ABRE WEBSOCKET
-  // ====================================================
+        aoErro: () => {
+            $("status-conexao").textContent = "Erro de conexão";
+        },
 
-  socket =
-    new WebSocket(
-      "ws://localhost:3000"
-    );
+        aoFechar: () => {
+            $("status-conexao").textContent =
+                "Desconectado. Recarregue a página.";
+        }
+    });
+}
 
-  socket.onopen =
-    () => {
-
-      $("status-conexao")
-        .textContent =
-          "Conectado";
-
-      liberarBotoesLobby();
-
-      socket.send(
-        JSON.stringify({
-          type:
-            "LIST_ROOMS"
-        })
-      );
-    };
-
-  socket.onerror =
-    (erro) => {
-
-      console.error(
-        "Erro WebSocket:",
-        erro
-      );
-
-      $("status-conexao")
-        .textContent =
-          "Erro de conexão";
-    };
-
-  socket.onclose =
-    () => {
-
-      $("status-conexao")
-        .textContent =
-          "Desconectado. Recarregue a página.";
-    };
-
-  // ====================================================
-  // MENSAGENS DO SERVIDOR
-  // ====================================================
-
-  socket.onmessage =
-    (event) => {
-
-      const mensagem =
-        JSON.parse(
-          event.data
-        );
-
-      console.log(
-        "Servidor:",
-        mensagem
-      );
-
-      switch (
-        mensagem.type
-      ) {
-
-        // ==============================================
-        // CONECTADO
-        // ==============================================
-
-        case "CONNECTED":
-
-          break;
-
-        // ==============================================
-        // LISTA DE SALAS
-        // ==============================================
-
-        case "ROOM_LIST_UPDATE":
-
-          renderizarSalasPublicas(
-            mensagem.rooms ||
-            []
-          );
-
-          break;
-
-        // ==============================================
-        // ENTROU NA SALA
-        // ==============================================
-
-        case "ROOM_JOINED":
-
-          mostrarSalaEntrou(
-            mensagem.roomCode
-          );
-
-          break;
-
-        // ==============================================
-        // RECONEXÃO
-        // ==============================================
-        //
-        // Pode acontecer caso o navegador tenha
-        // recarregado ou o servidor reconheça o
-        // jogador como já pertencente à sala.
-        // ==============================================
-
-        case "ROOM_RECONNECTED":
-
-          guardarSala(
-            mensagem.roomCode
-          );
-
-          // Se a partida já estiver acontecendo,
-          // vai direto para jogo.html.
-          if (
-            mensagem.status ===
-            "PLAYING"
-          ) {
-
-            window.location.href =
-              "/jogo.html";
-
-            return;
-          }
-
-          mostrarSalaEntrou(
-            mensagem.roomCode
-          );
-
-          break;
-
-        // ==============================================
-        // SALA NÃO ENCONTRADA
-        // ==============================================
-
-        case "ROOM_NOT_FOUND":
-
-          $("msg-lobby")
-            .textContent =
-              mensagem.message ||
-              "Sala não encontrada. Confira o código.";
-
-          liberarBotoesLobby();
-
-          break;
-
-        // ==============================================
-        // SALA CHEIA
-        // ==============================================
-
-        case "ROOM_FULL":
-
-          $("msg-lobby")
-            .textContent =
-              mensagem.message ||
-              "Essa sala já está cheia.";
-
-          liberarBotoesLobby();
-
-          break;
-
-        // ==============================================
-        // HOST AINDA NÃO ENTROU
-        // ==============================================
-
-        case "ROOM_HOST_REQUIRED":
-
-          $("msg-lobby")
-            .textContent =
-              mensagem.message ||
-              "Aguarde o host entrar na sala primeiro.";
-
-          liberarBotoesLobby();
-
-          break;
-
-        // ==============================================
-        // ERROS
-        // ==============================================
-
-        case "ERROR":
-
-        case "DATABASE_ERROR":
-
-          $("msg-lobby")
-            .textContent =
-              mensagem.message ||
-              "Ocorreu um erro.";
-
-          liberarBotoesLobby();
-
-          break;
-
-        // ==============================================
-        // PARTIDA COMEÇOU
-        // ==============================================
-
-        case "GAME_STARTED":
-
-          if (
-            mensagem.roomCode
-          ) {
-
-            guardarSala(
-              mensagem.roomCode
-            );
-          }
-
-          window.location.href =
-            "/jogo.html";
-
-          break;
-      }
-    };
-
-})();
+inicializarLobby();

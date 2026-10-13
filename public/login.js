@@ -1,606 +1,162 @@
-const btnAbaLogin =
-    document.getElementById(
-        "btnAbaLogin"
-    );
 
-const btnAbaCadastro =
-    document.getElementById(
-        "btnAbaCadastro"
-    );
+import {
+    cadastrarUsuario,
+    fazerLogin,
+    fazerLogout,
+    verificarSessao
+} from "./js/login/auth.js";
 
-const formLogin =
-    document.getElementById(
-        "formLogin"
-    );
+import {
+    mostrarMensagem,
+    abrirLogin,
+    abrirCadastro,
+    mostrarUsuarioLogado,
+    esconderMensagem
+} from "./js/login/interface.js";
 
-const formCadastro =
-    document.getElementById(
-        "formCadastro"
-    );
+const $ = (id) => document.getElementById(id);
 
-const areaLogado =
-    document.getElementById(
-        "areaLogado"
-    );
+// Alterna as abas
+$("btnAbaLogin").addEventListener("click", abrirLogin);
+$("btnAbaCadastro").addEventListener("click", abrirCadastro);
 
-const mensagem =
-    document.getElementById(
-        "mensagem"
-    );
-
-const nomeUsuario =
-    document.getElementById(
-        "nomeUsuario"
-    );
-
-const emailUsuario =
-    document.getElementById(
-        "emailUsuario"
-    );
-
-const btnLogout =
-    document.getElementById(
-        "btnLogout"
-    );
-
-const btnTestarSessao =
-    document.getElementById(
-        "btnTestarSessao"
-    );
-
-// ======================================================
-// MENSAGENS
-// ======================================================
-
-function mostrarMensagem(
-    texto,
-    tipo
-) {
-
-    mensagem.textContent =
-        texto;
-
-    mensagem.className =
-        `mensagem ${tipo}`;
-}
-
-function esconderMensagem() {
-
-    mensagem.textContent =
-        "";
-
-    mensagem.className =
-        "mensagem escondido";
-}
-
-// ======================================================
-// ABAS
-// ======================================================
-
-function abrirLogin() {
-
+// Cadastra um novo usuário
+$("formCadastro").addEventListener("submit", async (event) => {
+    event.preventDefault();
     esconderMensagem();
 
-    btnAbaLogin
-        .classList
-        .add("ativa");
+    const nickname = $("cadastroNickname").value.trim();
+    const email = $("cadastroEmail").value.trim();
+    const senha = $("cadastroSenha").value;
+    const confirmarSenha = $("cadastroConfirmarSenha").value;
 
-    btnAbaCadastro
-        .classList
-        .remove("ativa");
-
-    formLogin
-        .classList
-        .remove("escondido");
-
-    formCadastro
-        .classList
-        .add("escondido");
-
-    areaLogado
-        .classList
-        .add("escondido");
-
-    document.querySelector(
-        ".abas"
-    )
-        .classList
-        .remove("escondido");
-}
-
-function abrirCadastro() {
-
-    esconderMensagem();
-
-    btnAbaCadastro
-        .classList
-        .add("ativa");
-
-    btnAbaLogin
-        .classList
-        .remove("ativa");
-
-    formCadastro
-        .classList
-        .remove("escondido");
-
-    formLogin
-        .classList
-        .add("escondido");
-
-    areaLogado
-        .classList
-        .add("escondido");
-
-    document.querySelector(
-        ".abas"
-    )
-        .classList
-        .remove("escondido");
-}
-
-// ======================================================
-// ESTADO LOGADO
-// ======================================================
-
-function mostrarUsuarioLogado(
-    usuario
-) {
-
-    esconderMensagem();
-
-    formLogin
-        .classList
-        .add("escondido");
-
-    formCadastro
-        .classList
-        .add("escondido");
-
-    document.querySelector(
-        ".abas"
-    )
-        .classList
-        .add("escondido");
-
-    areaLogado
-        .classList
-        .remove("escondido");
-
-    nomeUsuario.textContent =
-        usuario.nickname;
-
-    emailUsuario.textContent =
-        usuario.email || "";
-}
-
-// ======================================================
-// CADASTRO
-// ======================================================
-
-formCadastro.addEventListener(
-    "submit",
-
-    async (event) => {
-
-        event.preventDefault();
-
-        esconderMensagem();
-
-        const nickname =
-            document
-                .getElementById(
-                    "cadastroNickname"
-                )
-                .value
-                .trim();
-
-        const email =
-            document
-                .getElementById(
-                    "cadastroEmail"
-                )
-                .value
-                .trim();
-
-        const senha =
-            document
-                .getElementById(
-                    "cadastroSenha"
-                )
-                .value;
-
-        const confirmarSenha =
-            document
-                .getElementById(
-                    "cadastroConfirmarSenha"
-                )
-                .value;
-
-        if (
-            senha !==
-            confirmarSenha
-        ) {
-
-            mostrarMensagem(
-                "As senhas não coincidem.",
-                "erro"
-            );
-
-            return;
-        }
-
-        const botao =
-            document.getElementById(
-                "btnCadastro"
-            );
-
-        botao.disabled =
-            true;
-
-        botao.textContent =
-            "Criando conta...";
-
-        try {
-
-            const resposta =
-                await fetch(
-                    "/api/auth/register",
-                    {
-                        method:
-                            "POST",
-
-                        headers: {
-                            "Content-Type":
-                                "application/json"
-                        },
-
-                        credentials:
-                            "include",
-
-                        body:
-                            JSON.stringify({
-                                nickname,
-                                email,
-                                senha
-                            })
-                    }
-                );
-
-            const dados =
-                await resposta.json();
-
-            if (
-                !resposta.ok
-            ) {
-
-                mostrarMensagem(
-                    dados.erro ||
-                    "Não foi possível criar a conta.",
-                    "erro"
-                );
-
-                return;
-            }
-
-             window.location.href = "/lobby.html";
-            return;
-
-        } catch (erro) {
-
-            console.error(
-                erro
-            );
-
-            mostrarMensagem(
-                "Não foi possível conectar ao servidor.",
-                "erro"
-            );
-
-        } finally {
-
-            botao.disabled =
-                false;
-
-            botao.textContent =
-                "Criar conta";
-        }
+    if (senha !== confirmarSenha) {
+        mostrarMensagem("As senhas não coincidem.", "erro");
+        return;
     }
-);
 
-// ======================================================
-// LOGIN
-// ======================================================
-
-formLogin.addEventListener(
-    "submit",
-
-    async (event) => {
-
-        event.preventDefault();
-
-        esconderMensagem();
-
-        const email =
-            document
-                .getElementById(
-                    "loginEmail"
-                )
-                .value
-                .trim();
-
-        const senha =
-            document
-                .getElementById(
-                    "loginSenha"
-                )
-                .value;
-
-        const botao =
-            document.getElementById(
-                "btnLogin"
-            );
-
-        botao.disabled =
-            true;
-
-        botao.textContent =
-            "Entrando...";
-
-        try {
-
-            const resposta =
-                await fetch(
-                    "/api/auth/login",
-                    {
-                        method:
-                            "POST",
-
-                        headers: {
-                            "Content-Type":
-                                "application/json"
-                        },
-
-                        credentials:
-                            "include",
-
-                        body:
-                            JSON.stringify({
-                                email,
-                                senha
-                            })
-                    }
-                );
-
-            const dados =
-                await resposta.json();
-
-            if (
-                !resposta.ok
-            ) {
-
-                mostrarMensagem(
-                    dados.erro ||
-                    "Não foi possível realizar o login.",
-                    "erro"
-                );
-
-                return;
-            }
-
-            window.location.href = "/lobby.html";
-            return;
-
-        } catch (erro) {
-
-            console.error(
-                erro
-            );
-
-            mostrarMensagem(
-                "Não foi possível conectar ao servidor.",
-                "erro"
-            );
-
-        } finally {
-
-            botao.disabled =
-                false;
-
-            botao.textContent =
-                "Entrar";
-        }
-    }
-);
-
-// ======================================================
-// LOGOUT
-// ======================================================
-
-btnLogout.addEventListener(
-    "click",
-
-    async () => {
-
-        try {
-
-            const resposta =
-                await fetch(
-                    "/api/auth/logout",
-                    {
-                        method:
-                            "POST",
-
-                        credentials:
-                            "include"
-                    }
-                );
-
-            const dados =
-                await resposta.json();
-
-            if (
-                !resposta.ok
-            ) {
-
-                mostrarMensagem(
-                    dados.erro ||
-                    "Erro ao sair.",
-                    "erro"
-                );
-
-                return;
-            }
-
-            formLogin.reset();
-
-            formCadastro.reset();
-
-            abrirLogin();
-
-            mostrarMensagem(
-                "Logout realizado com sucesso.",
-                "sucesso"
-            );
-
-        } catch (erro) {
-
-            console.error(
-                erro
-            );
-
-            mostrarMensagem(
-                "Não foi possível conectar ao servidor.",
-                "erro"
-            );
-        }
-    }
-);
-
-// ======================================================
-// TESTAR SESSÃO
-// ======================================================
-
-btnTestarSessao.addEventListener(
-    "click",
-
-    async () => {
-
-        try {
-
-            const resposta =
-                await fetch(
-                    "/api/auth/me",
-                    {
-                        credentials:
-                            "include"
-                    }
-                );
-
-            const dados =
-                await resposta.json();
-
-            if (
-                !resposta.ok
-            ) {
-
-                abrirLogin();
-
-                mostrarMensagem(
-                    "Sua sessão não está mais ativa.",
-                    "erro"
-                );
-
-                return;
-            }
-
-            mostrarUsuarioLogado(
-                dados.usuario
-            );
-
-            mostrarMensagem(
-                "Sessão válida.",
-                "sucesso"
-            );
-
-        } catch (erro) {
-
-            console.error(
-                erro
-            );
-
-            mostrarMensagem(
-                "Não foi possível verificar a sessão.",
-                "erro"
-            );
-        }
-    }
-);
-
-// ======================================================
-// BOTÕES DAS ABAS
-// ======================================================
-
-btnAbaLogin.addEventListener(
-    "click",
-    abrirLogin
-);
-
-btnAbaCadastro.addEventListener(
-    "click",
-    abrirCadastro
-);
-
-// ======================================================
-// VERIFICA SE JÁ ESTÁ LOGADO
-// ======================================================
-
-async function verificarSessaoInicial() {
+    const botao = $("btnCadastro");
+    botao.disabled = true;
+    botao.textContent = "Criando conta...";
 
     try {
+        const resultado = await cadastrarUsuario(nickname, email, senha);
 
-        const resposta =
-            await fetch(
-                "/api/auth/me",
-                {
-                    credentials:
-                        "include"
-                }
+        if (!resultado.ok) {
+            mostrarMensagem(
+                resultado.dados.erro || "Não foi possível criar a conta.",
+                "erro"
             );
-
-        if (
-            resposta.status ===
-            401
-        ) {
-
-            abrirLogin();
-
             return;
         }
 
-        const dados =
-            await resposta.json();
+        window.location.href = "/lobby.html";
+    } catch (erro) {
+        console.error("Erro no cadastro:", erro);
+        mostrarMensagem("Não foi possível conectar ao servidor.", "erro");
+    } finally {
+        botao.disabled = false;
+        botao.textContent = "Criar conta";
+    }
+});
 
-                if (
-            resposta.ok &&
-            dados.autenticado
-        ) {
+// Realiza o login
+$("formLogin").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    esconderMensagem();
 
+    const email = $("loginEmail").value.trim();
+    const senha = $("loginSenha").value;
+
+    const botao = $("btnLogin");
+    botao.disabled = true;
+    botao.textContent = "Entrando...";
+
+    try {
+        const resultado = await fazerLogin(email, senha);
+
+        if (!resultado.ok) {
+            mostrarMensagem(
+                resultado.dados.erro || "Não foi possível realizar o login.",
+                "erro"
+            );
+            return;
+        }
+
+        window.location.href = "/lobby.html";
+    } catch (erro) {
+        console.error("Erro no login:", erro);
+        mostrarMensagem("Não foi possível conectar ao servidor.", "erro");
+    } finally {
+        botao.disabled = false;
+        botao.textContent = "Entrar";
+    }
+});
+
+// Encerra a sessão
+$("btnLogout").addEventListener("click", async () => {
+    try {
+        const resultado = await fazerLogout();
+
+        if (!resultado.ok) {
+            mostrarMensagem(
+                resultado.dados.erro || "Erro ao sair.",
+                "erro"
+            );
+            return;
+        }
+
+        $("formLogin").reset();
+        $("formCadastro").reset();
+
+        abrirLogin();
+        mostrarMensagem("Logout realizado com sucesso.", "sucesso");
+    } catch (erro) {
+        console.error("Erro no logout:", erro);
+        mostrarMensagem("Não foi possível conectar ao servidor.", "erro");
+    }
+});
+
+// Testa a sessão atual
+$("btnTestarSessao").addEventListener("click", async () => {
+    try {
+        const resultado = await verificarSessao();
+
+        if (!resultado.ok) {
+            abrirLogin();
+            mostrarMensagem("Sua sessão não está mais ativa.", "erro");
+            return;
+        }
+
+        mostrarUsuarioLogado(resultado.dados.usuario);
+        mostrarMensagem("Sessão válida.", "sucesso");
+    } catch (erro) {
+        console.error("Erro ao verificar sessão:", erro);
+        mostrarMensagem("Não foi possível verificar a sessão.", "erro");
+    }
+});
+
+// Verifica se o usuário já está autenticado
+async function verificarSessaoInicial() {
+    try {
+        const resultado = await verificarSessao();
+
+        if (resultado.status === 401) {
+            abrirLogin();
+            return;
+        }
+
+        if (resultado.ok && resultado.dados.autenticado) {
             window.location.href = "/lobby.html";
             return;
         }
-        
+
         abrirLogin();
-
     } catch (erro) {
-
-        console.error(
-            "Erro ao verificar sessão:",
-            erro
-        );
-
+        console.error("Erro ao verificar sessão:", erro);
         abrirLogin();
     }
 }
 
+// Inicializa a página
 verificarSessaoInicial();

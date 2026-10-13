@@ -15,9 +15,8 @@ function criarServicoConexao({
     finalizarPartida,
     registrarVitoriaDerrota
 }) {
-
     // Trata a desconexão de um jogador
-    async function tratarDesconexao(ws) {
+    async function tratarDesconexao(ws, voluntaria = false) {
         const roomCode = ws.roomCode;
 
         if (!roomCode) {
@@ -47,15 +46,38 @@ function criarServicoConexao({
         jogador.socket = null;
 
         console.log(
-            `${jogador.name} desconectou da sala ${roomCode}`
+            `${jogador.name} ${
+                voluntaria ? "saiu" : "desconectou"
+            } da sala ${roomCode}`
         );
 
-        // Mantém salas privadas aguardando reconexão
+        // Avisa sobre a saída após o fim da partida
+        if (sala.status === "FINISHED") {
+            sala.rematchRequests.clear();
+
+            enviarParaSala(sala, {
+                type: "PLAYER_LEFT_ROOM",
+                playerName: jogador.name,
+                message: `${jogador.name} saiu da sala.`
+            });
+
+            return;
+        }
+
+        // Trata salas que aguardam jogadores
         if (sala.status === "WAITING") {
+            if (voluntaria) {
+                enviarParaSala(sala, {
+                    type: "PLAYER_LEFT_ROOM",
+                    playerName: jogador.name,
+                    message: `${jogador.name} saiu da sala.`
+                });
+            }
+
             if (sala.private) {
                 console.log(
                     `Sala privada ${roomCode} permanece ` +
-                    `persistida aguardando reconexão.`
+                    "persistida aguardando reconexão."
                 );
                 return;
             }
@@ -65,14 +87,10 @@ function criarServicoConexao({
 
             try {
                 await removerSalaBanco(sala.idSala);
-
-                console.log(
-                    `Sala pública ${roomCode} removida do banco.`
-                );
             } catch (erro) {
                 console.error(
-                    "Erro ao remover sala pública do banco:",
-                    erro.message
+                    "Erro ao remover sala pública:",
+                    erro
                 );
             }
 
@@ -84,10 +102,23 @@ function criarServicoConexao({
             return;
         }
 
-        // Pausa o cronômetro da partida
+        // Pausa o cronômetro
         cancelarCronometroTurno(sala);
 
-        // Avisa os jogadores sobre a desconexão
+        // Encerra imediatamente a saída voluntária
+        if (voluntaria) {
+            await finalizarPorWO(sala, jogador);
+
+            enviarParaSala(sala, {
+                type: "PLAYER_LEFT_ROOM",
+                playerName: jogador.name,
+                message: `${jogador.name} saiu da partida.`
+            });
+
+            return;
+        }
+
+        // Avisa sobre a queda de conexão
         enviarParaSala(sala, {
             type: "PLAYER_DISCONNECTED",
             playerName: jogador.name,
@@ -95,10 +126,12 @@ function criarServicoConexao({
             reconnectSeconds: tempoReconexaoMs / 1000,
             message:
                 `${jogador.name} desconectou. ` +
-                `Aguardando reconexão por ${tempoReconexaoMs / 1000} segundos.`
+                `Aguardando reconexão por ${
+                    tempoReconexaoMs / 1000
+                } segundos.`
         });
 
-        // Aguarda a reconexão antes de aplicar W.O.
+        // Aguarda a reconexão antes do W.O.
         jogador.disconnectTimer = setTimeout(() => {
             finalizarPorWO(sala, jogador).catch(erro => {
                 console.error(
@@ -109,16 +142,34 @@ function criarServicoConexao({
         }, tempoReconexaoMs);
     }
 
-    // Restaura a conexão de um jogador
-    function reconectarJogador(ws, sala, jogador) {
+    // Processa a saída voluntária
+    async function sairVoluntariamente(ws) {
+        if (ws.saidaVoluntaria) {
+            return;
+        }
 
-        // Cancela o prazo de desconexão
+        // Evita tratar o fechamento como queda de conexão
+        ws.saidaVoluntaria = true;
+
+        try {
+            await tratarDesconexao(ws, true);
+        } finally {
+            // Confirma a saída ao navegador
+            enviar(ws, {
+                type: "LEAVE_ROOM_ACK",
+                message: "Saída confirmada."
+            });
+        }
+    }
+
+    // Restaura a conexão do jogador
+    function reconectarJogador(ws, sala, jogador) {
+        // Cancela o prazo de reconexão
         if (jogador.disconnectTimer) {
             clearTimeout(jogador.disconnectTimer);
             jogador.disconnectTimer = null;
         }
 
-        // Atualiza a conexão do jogador
         jogador.socket = ws;
         jogador.connected = true;
 
@@ -127,7 +178,7 @@ function criarServicoConexao({
         ws.playerSymbol = jogador.symbol;
         ws.playerId = jogador.idJogador;
 
-        // Envia o estado atual da sala ao jogador
+        // Envia o estado atual da sala
         enviar(ws, {
             type: "ROOM_RECONNECTED",
             roomCode: sala.code,
@@ -144,20 +195,19 @@ function criarServicoConexao({
             }))
         });
 
-        // Avisa a sala que o jogador voltou
+        // Avisa sobre a reconexão
         enviarParaSala(sala, {
             type: "PLAYER_RECONNECTED",
             playerName: jogador.name,
             playerSymbol: jogador.symbol,
-            message:
-                `${jogador.name} reconectou à partida.`
+            message: `${jogador.name} reconectou à partida.`
         });
 
         console.log(
             `${jogador.name} reconectou na sala ${sala.code}`
         );
 
-        // Reinicia o cronômetro caso a partida esteja ativa
+        // Reinicia o cronômetro
         if (sala.status === "PLAYING") {
             iniciarCronometroTurno(sala);
         }
@@ -167,7 +217,6 @@ function criarServicoConexao({
     async function finalizarPorWO(sala, jogadorDesconectado) {
         jogadorDesconectado.disconnectTimer = null;
 
-        // Cancela o W.O. se o jogador voltou
         if (jogadorDesconectado.connected) {
             return;
         }
@@ -178,7 +227,7 @@ function criarServicoConexao({
 
         cancelarCronometroTurno(sala);
 
-        // Procura o jogador que permaneceu conectado
+        // Procura o adversário conectado
         const vencedor = sala.players.find(
             player =>
                 player !== jogadorDesconectado &&
@@ -191,12 +240,11 @@ function criarServicoConexao({
 
         if (!vencedor) {
             console.log(
-                `Partida da sala ${sala.code} encerrada sem vencedor.`
+                `Partida ${sala.code} encerrada sem vencedor.`
             );
             return;
         }
 
-        // Atualiza o placar do vencedor
         vencedor.score++;
 
         const {
@@ -209,7 +257,7 @@ function criarServicoConexao({
                 ? "VITORIA_HOST"
                 : "VITORIA_VISITANTE";
 
-        // Registra o W.O. no banco
+        // Registra o resultado no banco
         try {
             await atualizarStatusSala(
                 sala.idSala,
@@ -235,7 +283,7 @@ function criarServicoConexao({
             );
         }
 
-        // Informa o resultado da partida
+        // Informa o resultado
         enviarParaSala(sala, {
             type: "GAME_OVER",
             result: "WO",
@@ -245,27 +293,27 @@ function criarServicoConexao({
             score: obterPlacar(sala)
         });
 
-        // Atualiza o placar dos jogadores
+        // Atualiza o placar
         enviarParaSala(sala, {
             type: "SCORE_UPDATE",
             score: obterPlacar(sala)
         });
 
         console.log(
-            `${vencedor.name} venceu por W.O. após desconexão ` +
-            `de ${jogadorDesconectado.name}.`
+            `${vencedor.name} venceu por W.O. ` +
+            `após a saída de ${jogadorDesconectado.name}.`
         );
     }
 
-    // Disponibiliza as funções do serviço
+    // Exporta as funções do serviço
     return {
         tratarDesconexao,
+        sairVoluntariamente,
         reconectarJogador,
         finalizarPorWO
     };
 }
 
-// Exporta o módulo
 module.exports = {
     criarServicoConexao
 };
