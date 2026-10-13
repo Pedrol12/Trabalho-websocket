@@ -1,3 +1,15 @@
 node_modules/
 .env
+
+# Banco de dados
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Backups
+*.backup.js
+*.bak
+
+# Logs
+*.log

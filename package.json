@@ -19,7 +19,9 @@
   },
   "homepage": "https://github.com/Pedrol12/Trabalho-websocket#readme",
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "express": "^5.2.1",
+    "express-session": "^1.19.0",
     "sqlite3": "^6.0.1",
     "ws": "^8.22.0"
   }
