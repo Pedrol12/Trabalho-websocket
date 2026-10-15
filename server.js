@@ -1,6 +1,5 @@
 const express = require("express");
 const http = require("http");
-const bcrypt = require("bcryptjs");
 const session = require("express-session");
 const { WebSocketServer, WebSocket } = require("ws");
 
@@ -10,21 +9,12 @@ const {
     buscarOuCriarJogador,
     registrarVitoriaDerrota,
 
-    criarJogadorAutenticado,
-    buscarJogadorPorEmail,
-    buscarJogadorPorId,
-    buscarJogadorPorNickname,
-    atualizarCredenciaisJogador,
-
     codigoSalaExiste,
     criarSalaBanco,
     adicionarVisitanteSala,
     atualizarStatusSala,
     removerSalaBanco,
 
-    listarSalasBanco,
-    listarSalasPublicasBanco,
-    listarSalasPrivadasBanco,
     buscarSalaPorCodigoBanco,
     listarSalasAguardandoBanco,
 
@@ -35,6 +25,25 @@ const {
     registrarJogada,
     registrarMensagemChat
 } = require("./database/database");
+
+// TÓPICO PROFESSOR: ROTAS HTTP MODULARIZADAS
+const authRoutes =
+    require("./src/routes/auth.routes");
+
+const {
+    exigirAutenticacao
+} =
+    require("./src/middlewares/auth.middleware");
+
+const {
+    criarSalasController
+} =
+    require("./src/controllers/salas.controller");
+
+const {
+    criarSalasRoutes
+} =
+    require("./src/routes/salas.routes");
 
 // ======================================================
 // CONFIGURAÇÃO
@@ -49,19 +58,17 @@ const TEMPO_TURNO_MS = 15000;
 // Janela de reconexão antes do W.O.
 const TEMPO_RECONEXAO_MS = 30000;
 
-// Intervalo para verificar conexões WebSocket.
+// Intervalo de verificação das conexões WebSocket.
 const HEARTBEAT_INTERVAL_MS = 10000;
 
 // ======================================================
 // TÓPICO PROFESSOR: REGRAS HTTP
 // ======================================================
 
-// Interpreta requisições JSON.
 app.use(
     express.json()
 );
 
-// Interpreta dados de formulários.
 app.use(
     express.urlencoded({
         extended: false
@@ -100,9 +107,17 @@ app.use(
     })
 );
 
-// Arquivos públicos do frontend.
 app.use(
     express.static("public")
+);
+
+// ======================================================
+// TÓPICO PROFESSOR: ROTAS HTTP MODULARIZADAS
+// ======================================================
+
+app.use(
+    "/api/auth",
+    authRoutes
 );
 
 // ======================================================
@@ -110,7 +125,6 @@ app.use(
 // ======================================================
 
 // TÓPICO PROFESSOR: INSTÂNCIA DO WEBSOCKET
-// O mesmo servidor HTTP recebe também o upgrade WebSocket.
 const server =
     http.createServer(app);
 
@@ -120,7 +134,6 @@ const wss =
     });
 
 // TÓPICO PROFESSOR: ESTADO EM MEMÓRIA
-// Mantém salas, jogadores, tabuleiro e estado ativo.
 const rooms =
     new Map();
 
@@ -152,477 +165,6 @@ app.get(
             websocket:
                 `ws://localhost:${PORT}`
         });
-    }
-);
-
-// ======================================================
-// AUTENTICAÇÃO
-// ======================================================
-
-function exigirAutenticacao(
-    req,
-    res,
-    next
-) {
-
-    if (
-        !req.session.usuario
-    ) {
-
-        return res
-            .status(401)
-            .json({
-                sucesso:
-                    false,
-
-                erro:
-                    "Usuário não autenticado."
-            });
-    }
-
-    next();
-}
-
-// Nunca envia senha_hash para o navegador.
-function usuarioSeguro(
-    jogador
-) {
-
-    return {
-        idJogador:
-            jogador.id_jogador,
-
-        nickname:
-            jogador.nickname,
-
-        email:
-            jogador.email,
-
-        vitoriasTotais:
-            jogador.vitorias_totais || 0,
-
-        derrotasTotais:
-            jogador.derrotas_totais || 0
-    };
-}
-
-// ======================================================
-// POST - CADASTRO
-// ======================================================
-
-app.post(
-    "/api/auth/register",
-
-    async (req, res) => {
-
-        try {
-
-            const nickname =
-                String(
-                    req.body.nickname || ""
-                ).trim();
-
-            const email =
-                String(
-                    req.body.email || ""
-                )
-                    .trim()
-                    .toLowerCase();
-
-            const senha =
-                String(
-                    req.body.senha || ""
-                );
-
-            if (
-                nickname.length < 2
-            ) {
-
-                return res
-                    .status(400)
-                    .json({
-                        sucesso:
-                            false,
-
-                        erro:
-                            "O nickname precisa ter pelo menos 2 caracteres."
-                    });
-            }
-
-            if (
-                !email ||
-                !email.includes("@")
-            ) {
-
-                return res
-                    .status(400)
-                    .json({
-                        sucesso:
-                            false,
-
-                        erro:
-                            "Informe um e-mail válido."
-                    });
-            }
-
-            if (
-                senha.length < 6
-            ) {
-
-                return res
-                    .status(400)
-                    .json({
-                        sucesso:
-                            false,
-
-                        erro:
-                            "A senha precisa ter pelo menos 6 caracteres."
-                    });
-            }
-
-            const jogadorComEmail =
-                await buscarJogadorPorEmail(
-                    email
-                );
-
-            if (
-                jogadorComEmail
-            ) {
-
-                return res
-                    .status(409)
-                    .json({
-                        sucesso:
-                            false,
-
-                        erro:
-                            "Já existe uma conta com esse e-mail."
-                    });
-            }
-
-            const jogadorComNickname =
-                await buscarJogadorPorNickname(
-                    nickname
-                );
-
-            const senhaHash =
-                await bcrypt.hash(
-                    senha,
-                    10
-                );
-
-            let jogador;
-
-            if (
-                jogadorComNickname &&
-                !jogadorComNickname.email &&
-                !jogadorComNickname.senha_hash
-            ) {
-
-                await atualizarCredenciaisJogador(
-                    jogadorComNickname.id_jogador,
-                    email,
-                    senhaHash
-                );
-
-                jogador =
-                    await buscarJogadorPorId(
-                        jogadorComNickname.id_jogador
-                    );
-
-            } else if (
-                jogadorComNickname
-            ) {
-
-                return res
-                    .status(409)
-                    .json({
-                        sucesso:
-                            false,
-
-                        erro:
-                            "Esse nickname já está sendo utilizado."
-                    });
-
-            } else {
-
-                jogador =
-                    await criarJogadorAutenticado(
-                        nickname,
-                        email,
-                        senhaHash
-                    );
-            }
-
-            req.session.usuario =
-                usuarioSeguro(
-                    jogador
-                );
-
-            return res
-                .status(201)
-                .json({
-                    sucesso:
-                        true,
-
-                    mensagem:
-                        "Conta criada com sucesso.",
-
-                    usuario:
-                        req.session.usuario
-                });
-
-        } catch (erro) {
-
-            console.error(
-                "Erro no cadastro:",
-                erro
-            );
-
-            return res
-                .status(500)
-                .json({
-                    sucesso:
-                        false,
-
-                    erro:
-                        "Não foi possível criar a conta."
-                });
-        }
-    }
-);
-
-// ======================================================
-// POST - LOGIN
-// ======================================================
-
-app.post(
-    "/api/auth/login",
-
-    async (req, res) => {
-
-        try {
-
-            const email =
-                String(
-                    req.body.email || ""
-                )
-                    .trim()
-                    .toLowerCase();
-
-            const senha =
-                String(
-                    req.body.senha || ""
-                );
-
-            if (
-                !email ||
-                !senha
-            ) {
-
-                return res
-                    .status(400)
-                    .json({
-                        sucesso:
-                            false,
-
-                        erro:
-                            "E-mail e senha são obrigatórios."
-                    });
-            }
-
-            const jogador =
-                await buscarJogadorPorEmail(
-                    email
-                );
-
-            if (
-                !jogador ||
-                !jogador.senha_hash
-            ) {
-
-                return res
-                    .status(401)
-                    .json({
-                        sucesso:
-                            false,
-
-                        erro:
-                            "E-mail ou senha inválidos."
-                    });
-            }
-
-            const senhaCorreta =
-                await bcrypt.compare(
-                    senha,
-                    jogador.senha_hash
-                );
-
-            if (
-                !senhaCorreta
-            ) {
-
-                return res
-                    .status(401)
-                    .json({
-                        sucesso:
-                            false,
-
-                        erro:
-                            "E-mail ou senha inválidos."
-                    });
-            }
-
-            req.session.usuario =
-                usuarioSeguro(
-                    jogador
-                );
-
-            return res.json({
-                sucesso:
-                    true,
-
-                mensagem:
-                    "Login realizado com sucesso.",
-
-                usuario:
-                    req.session.usuario
-            });
-
-        } catch (erro) {
-
-            console.error(
-                "Erro no login:",
-                erro
-            );
-
-            return res
-                .status(500)
-                .json({
-                    sucesso:
-                        false,
-
-                    erro:
-                        "Não foi possível realizar o login."
-                });
-        }
-    }
-);
-
-// ======================================================
-// GET - USUÁRIO LOGADO
-// ======================================================
-
-app.get(
-    "/api/auth/me",
-
-    exigirAutenticacao,
-
-    async (req, res) => {
-
-        try {
-
-            const jogador =
-                await buscarJogadorPorId(
-                    req.session.usuario.idJogador
-                );
-
-            if (
-                !jogador
-            ) {
-
-                return res
-                    .status(404)
-                    .json({
-                        sucesso:
-                            false,
-
-                        erro:
-                            "Usuário não encontrado."
-                    });
-            }
-
-            req.session.usuario =
-                usuarioSeguro(
-                    jogador
-                );
-
-            return res.json({
-                sucesso:
-                    true,
-
-                autenticado:
-                    true,
-
-                usuario:
-                    req.session.usuario
-            });
-
-        } catch (erro) {
-
-            console.error(
-                "Erro ao consultar sessão:",
-                erro
-            );
-
-            return res
-                .status(500)
-                .json({
-                    sucesso:
-                        false,
-
-                    erro:
-                        "Não foi possível consultar a sessão."
-                });
-        }
-    }
-);
-
-// ======================================================
-// POST - LOGOUT
-// ======================================================
-
-app.post(
-    "/api/auth/logout",
-
-    (req, res) => {
-
-        req.session.destroy(
-            (erro) => {
-
-                if (
-                    erro
-                ) {
-
-                    console.error(
-                        "Erro no logout:",
-                        erro
-                    );
-
-                    return res
-                        .status(500)
-                        .json({
-                            sucesso:
-                                false,
-
-                            erro:
-                                "Não foi possível encerrar a sessão."
-                        });
-                }
-
-                res.clearCookie(
-                    "connect.sid"
-                );
-
-                return res.json({
-                    sucesso:
-                        true,
-
-                    mensagem:
-                        "Logout realizado com sucesso."
-                });
-            }
-        );
     }
 );
 
@@ -735,11 +277,32 @@ function salaBancoParaMemoria(
 }
 
 // ======================================================
+// TÓPICO PROFESSOR: ROTAS DE SALAS MODULARIZADAS
+// ======================================================
+
+const salasController =
+    criarSalasController({
+        rooms,
+        gerarCodigoSala,
+        criarEstruturaSala
+    });
+
+app.use(
+    "/api/salas",
+
+    criarSalasRoutes({
+        controller:
+            salasController,
+
+        exigirAutenticacao
+    })
+);
+
+// ======================================================
 // RECUPERA SALAS PRIVADAS APÓS REINICIAR NODE
 // ======================================================
 
 // TÓPICO PROFESSOR: PERSISTÊNCIA DE DADOS
-// Recupera do SQLite as salas persistidas.
 async function recuperarSalasPrivadasPersistidas() {
 
     const salas =
@@ -835,327 +398,6 @@ async function buscarOuRecuperarSala(
 }
 
 // ======================================================
-// HTTP - POST SALA PRIVADA
-// ======================================================
-
-app.post(
-    "/api/salas/privadas",
-
-    exigirAutenticacao,
-
-    async (req, res) => {
-
-        try {
-
-            let roomCode;
-            let codigoJaExiste;
-
-            do {
-
-                roomCode =
-                    gerarCodigoSala();
-
-                codigoJaExiste =
-                    rooms.has(
-                        roomCode
-                    ) ||
-                    await codigoSalaExiste(
-                        roomCode
-                    );
-
-            } while (
-                codigoJaExiste
-            );
-
-            const usuario =
-                req.session.usuario;
-
-            // ==========================================
-            // TÓPICO PROFESSOR: PERSISTÊNCIA SQLITE
-            // ==========================================
-
-            const idSala =
-                await criarSalaBanco(
-                    roomCode,
-                    usuario.idJogador,
-                    true
-                );
-
-            // ==========================================
-            // TÓPICO PROFESSOR: ESTADO EM MEMÓRIA
-            // ==========================================
-
-            const sala =
-                criarEstruturaSala({
-                    idSala,
-
-                    roomCode,
-
-                    privada:
-                        true,
-
-                    hostId:
-                        usuario.idJogador,
-
-                    hostName:
-                        usuario.nickname
-                });
-
-            rooms.set(
-                roomCode,
-                sala
-            );
-
-            console.log(
-                `Sala privada ${roomCode} criada via HTTP ` +
-                `e salva no SQLite.`
-            );
-
-            return res
-                .status(201)
-                .json({
-                    sucesso:
-                        true,
-
-                    mensagem:
-                        "Sala privada criada e persistida com sucesso.",
-
-                    sala: {
-                        idSala,
-
-                        roomCode,
-
-                        private:
-                            true,
-
-                        status:
-                            "WAITING",
-
-                        host: {
-                            idJogador:
-                                usuario.idJogador,
-
-                            nickname:
-                                usuario.nickname
-                        }
-                    }
-                });
-
-        } catch (erro) {
-
-            console.error(
-                "Erro ao criar sala privada via HTTP:",
-                erro
-            );
-
-            return res
-                .status(500)
-                .json({
-                    sucesso:
-                        false,
-
-                    erro:
-                        "Não foi possível criar a sala privada."
-                });
-        }
-    }
-);
-
-// ======================================================
-// GET - SALAS PÚBLICAS
-// ======================================================
-
-app.get(
-    "/api/salas/publicas",
-
-    async (req, res) => {
-
-        try {
-
-            const salas =
-                await listarSalasPublicasBanco();
-
-            return res.json({
-                total:
-                    salas.length,
-
-                salas
-            });
-
-        } catch (erro) {
-
-            console.error(
-                "Erro ao listar salas públicas:",
-                erro
-            );
-
-            return res
-                .status(500)
-                .json({
-                    sucesso:
-                        false,
-
-                    erro:
-                        "Não foi possível consultar as salas públicas."
-                });
-        }
-    }
-);
-
-// ======================================================
-// GET - TODAS AS SALAS
-// ======================================================
-
-app.get(
-    "/api/salas",
-
-    exigirAutenticacao,
-
-    async (req, res) => {
-
-        try {
-
-            const salas =
-                await listarSalasBanco();
-
-            return res.json({
-                total:
-                    salas.length,
-
-                salas
-            });
-
-        } catch (erro) {
-
-            console.error(
-                "Erro ao listar salas:",
-                erro
-            );
-
-            return res
-                .status(500)
-                .json({
-                    sucesso:
-                        false,
-
-                    erro:
-                        "Não foi possível consultar as salas."
-                });
-        }
-    }
-);
-
-// ======================================================
-// GET - SALAS PRIVADAS
-// ======================================================
-
-app.get(
-    "/api/salas/privadas",
-
-    exigirAutenticacao,
-
-    async (req, res) => {
-
-        try {
-
-            const salas =
-                await listarSalasPrivadasBanco();
-
-            return res.json({
-                total:
-                    salas.length,
-
-                salas
-            });
-
-        } catch (erro) {
-
-            console.error(
-                "Erro ao listar salas privadas:",
-                erro
-            );
-
-            return res
-                .status(500)
-                .json({
-                    sucesso:
-                        false,
-
-                    erro:
-                        "Não foi possível consultar as salas privadas."
-                });
-        }
-    }
-);
-
-// ======================================================
-// GET - SALA PELO CÓDIGO
-// ======================================================
-
-app.get(
-    "/api/salas/:codigo",
-
-    exigirAutenticacao,
-
-    async (req, res) => {
-
-        try {
-
-            const codigo =
-                String(
-                    req.params.codigo || ""
-                )
-                    .trim()
-                    .toUpperCase();
-
-            const sala =
-                await buscarSalaPorCodigoBanco(
-                    codigo
-                );
-
-            if (
-                !sala
-            ) {
-
-                return res
-                    .status(404)
-                    .json({
-                        sucesso:
-                            false,
-
-                        erro:
-                            "Sala não encontrada."
-                    });
-            }
-
-            return res.json({
-                sucesso:
-                    true,
-
-                sala
-            });
-
-        } catch (erro) {
-
-            console.error(
-                "Erro ao consultar sala:",
-                erro
-            );
-
-            return res
-                .status(500)
-                .json({
-                    sucesso:
-                        false,
-
-                    erro:
-                        "Não foi possível consultar a sala."
-                });
-        }
-    }
-);
-
-// ======================================================
 // AUXILIARES WEBSOCKET
 // ======================================================
 
@@ -1202,7 +444,7 @@ function enviarParaSala(
 }
 
 // ======================================================
-// SALAS PÚBLICAS
+// SALAS PÚBLICAS NO WEBSOCKET
 // ======================================================
 
 function obterSalasPublicas() {
@@ -1561,7 +803,6 @@ function verificarEmpate(
 // ======================================================
 
 // TÓPICO PROFESSOR: TRATAMENTO DE REDE
-// connection -> message -> error/close + heartbeat.
 wss.on(
     "connection",
 
@@ -1752,7 +993,6 @@ wss.on(
 // TÓPICO PROFESSOR: HEARTBEAT / TRATAMENTO DE REDE
 // ======================================================
 
-// Verifica se cada cliente ainda responde.
 const heartbeatInterval =
     setInterval(
         () => {
@@ -1907,8 +1147,7 @@ async function entrarNaSala(
 
             console.log(
                 `Sala ${roomCode} criada no banco ` +
-                `com ID ${idSala}. ` +
-                `Privada: ${privada}`
+                `com ID ${idSala}. Privada: ${privada}`
             );
 
         } else {
@@ -1943,29 +1182,54 @@ async function entrarNaSala(
                 return;
             }
 
-            // ==========================================
-            // RECONEXÃO
-            // ==========================================
-
-            const jogadorDesconectado =
+            // TÓPICO PROFESSOR: RECONEXÃO / TROCA DE SOCKET
+            const jogadorExistente =
                 sala.players.find(
                     (player) =>
-
                         player.name ===
-                            playerName &&
-
-                        !player.connected
+                        playerName
                 );
 
             if (
-                jogadorDesconectado
+                jogadorExistente
             ) {
+
+                const socketAntigo =
+                    jogadorExistente.socket;
 
                 reconectarJogador(
                     ws,
                     sala,
-                    jogadorDesconectado
+                    jogadorExistente
                 );
+
+                if (
+                    socketAntigo &&
+                    socketAntigo !==
+                        ws &&
+                    (
+                        socketAntigo.readyState ===
+                            WebSocket.OPEN ||
+
+                        socketAntigo.readyState ===
+                            WebSocket.CONNECTING
+                    )
+                ) {
+
+                    try {
+
+                        socketAntigo.close(
+                            1000,
+                            "Conexao substituida por novo socket"
+                        );
+
+                    } catch (erro) {
+
+                        console.log(
+                            "Socket antigo já estava encerrado."
+                        );
+                    }
+                }
 
                 return;
             }
@@ -2026,7 +1290,6 @@ async function entrarNaSala(
                 : "O";
 
         const jogador = {
-
             idJogador:
                 jogadorBanco.id_jogador,
 
@@ -2250,6 +1513,7 @@ async function executarJogada(
 
     if (
         !sala ||
+
         sala.status !==
             "PLAYING"
     ) {
@@ -2670,6 +1934,7 @@ async function executarJogada(
 
         await atualizarTurnoPartida(
             sala.idPartida,
+
             sala.currentTurn
         );
 
@@ -2785,7 +2050,9 @@ async function enviarMensagemChat(
 
         await registrarMensagemChat(
             sala.idSala,
+
             ws.playerId,
+
             texto
         );
 
@@ -2932,8 +2199,8 @@ async function solicitarRevanche(
     );
 
     if (
-        sala.rematchRequests.size ===
-        1
+        sala.rematchRequests
+            .size === 1
     ) {
 
         enviarParaSala(
@@ -2954,8 +2221,8 @@ async function solicitarRevanche(
     }
 
     if (
-        sala.rematchRequests.size ===
-        2
+        sala.rematchRequests
+            .size === 2
     ) {
 
         await iniciarNovaPartida(
@@ -3004,7 +2271,8 @@ async function iniciarNovaPartida(
     sala.status =
         "PLAYING";
 
-    sala.rematchRequests.clear();
+    sala.rematchRequests
+        .clear();
 
     try {
 
@@ -3142,6 +2410,7 @@ async function tratarDesconexao(
 
     if (
         !jogador ||
+
         !jogador.connected
     ) {
 
@@ -3266,7 +2535,6 @@ async function tratarDesconexao(
 // ======================================================
 
 // TÓPICO PROFESSOR: RECONEXÃO AUTOMÁTICA - BACKEND
-// Reassocia o socket e restaura o estado.
 function reconectarJogador(
     ws,
     sala,
@@ -3390,11 +2658,13 @@ async function finalizarPorWO(
     jogadorDesconectado
 ) {
 
-    jogadorDesconectado.disconnectTimer =
+    jogadorDesconectado
+        .disconnectTimer =
         null;
 
     if (
-        jogadorDesconectado.connected
+        jogadorDesconectado
+            .connected
     ) {
 
         return;
@@ -3428,7 +2698,8 @@ async function finalizarPorWO(
     sala.currentTurn =
         null;
 
-    sala.rematchRequests.clear();
+    sala.rematchRequests
+        .clear();
 
     if (
         !vencedor
@@ -3573,6 +2844,10 @@ inicializarBanco()
 
                     console.log(
                         "Heartbeat WebSocket ativo."
+                    );
+
+                    console.log(
+                        "Rotas HTTP modularizadas."
                     );
                 }
             );
