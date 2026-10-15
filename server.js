@@ -41,20 +41,27 @@ const {
 // ======================================================
 
 const app = express();
-app.use(express.static("public"));
 
 const PORT = 3000;
 
 const TEMPO_TURNO_MS = 15000;
 
+// Janela de reconexão antes do W.O.
 const TEMPO_RECONEXAO_MS = 30000;
 
-// Permite receber JSON nos POSTs
+// Intervalo para verificar conexões WebSocket.
+const HEARTBEAT_INTERVAL_MS = 10000;
+
+// ======================================================
+// TÓPICO PROFESSOR: REGRAS HTTP
+// ======================================================
+
+// Interpreta requisições JSON.
 app.use(
     express.json()
 );
 
-// Permite receber formulários HTML
+// Interpreta dados de formulários.
 app.use(
     express.urlencoded({
         extended: false
@@ -93,7 +100,7 @@ app.use(
     })
 );
 
-// Arquivos HTML/CSS/JS do frontend
+// Arquivos públicos do frontend.
 app.use(
     express.static("public")
 );
@@ -102,6 +109,8 @@ app.use(
 // HTTP + WEBSOCKET
 // ======================================================
 
+// TÓPICO PROFESSOR: INSTÂNCIA DO WEBSOCKET
+// O mesmo servidor HTTP recebe também o upgrade WebSocket.
 const server =
     http.createServer(app);
 
@@ -110,7 +119,8 @@ const wss =
         server
     });
 
-// Salas atualmente carregadas em memória
+// TÓPICO PROFESSOR: ESTADO EM MEMÓRIA
+// Mantém salas, jogadores, tabuleiro e estado ativo.
 const rooms =
     new Map();
 
@@ -173,7 +183,7 @@ function exigirAutenticacao(
     next();
 }
 
-// Nunca envia senha_hash para o navegador
+// Nunca envia senha_hash para o navegador.
 function usuarioSeguro(
     jogador
 ) {
@@ -202,6 +212,7 @@ function usuarioSeguro(
 
 app.post(
     "/api/auth/register",
+
     async (req, res) => {
 
         try {
@@ -222,10 +233,6 @@ app.post(
                 String(
                     req.body.senha || ""
                 );
-
-            // ==========================================
-            // VALIDAÇÕES
-            // ==========================================
 
             if (
                 nickname.length < 2
@@ -273,10 +280,6 @@ app.post(
                     });
             }
 
-            // ==========================================
-            // EMAIL DUPLICADO
-            // ==========================================
-
             const jogadorComEmail =
                 await buscarJogadorPorEmail(
                     email
@@ -297,16 +300,11 @@ app.post(
                     });
             }
 
-            // ==========================================
-            // NICKNAME EXISTENTE
-            // ==========================================
-
             const jogadorComNickname =
                 await buscarJogadorPorNickname(
                     nickname
                 );
 
-            // Criptografa a senha
             const senhaHash =
                 await bcrypt.hash(
                     senha,
@@ -315,9 +313,6 @@ app.post(
 
             let jogador;
 
-            // Se o jogador existia dos testes antigos,
-            // mas ainda não tinha login,
-            // transforma ele em conta autenticada.
             if (
                 jogadorComNickname &&
                 !jogadorComNickname.email &&
@@ -358,10 +353,6 @@ app.post(
                         senhaHash
                     );
             }
-
-            // ==========================================
-            // CRIA SESSÃO
-            // ==========================================
 
             req.session.usuario =
                 usuarioSeguro(
@@ -407,6 +398,7 @@ app.post(
 
 app.post(
     "/api/auth/login",
+
     async (req, res) => {
 
         try {
@@ -592,6 +584,7 @@ app.get(
 
 app.post(
     "/api/auth/logout",
+
     (req, res) => {
 
         req.session.destroy(
@@ -664,7 +657,6 @@ function gerarCodigoSala() {
     return codigo;
 }
 
-// Cria a estrutura usada pelo WebSocket
 function criarEstruturaSala({
     idSala,
     roomCode,
@@ -717,8 +709,6 @@ function criarEstruturaSala({
     };
 }
 
-// Converte uma sala que veio do SQLite
-// para o formato usado em memória.
 function salaBancoParaMemoria(
     salaBanco
 ) {
@@ -748,6 +738,8 @@ function salaBancoParaMemoria(
 // RECUPERA SALAS PRIVADAS APÓS REINICIAR NODE
 // ======================================================
 
+// TÓPICO PROFESSOR: PERSISTÊNCIA DE DADOS
+// Recupera do SQLite as salas persistidas.
 async function recuperarSalasPrivadasPersistidas() {
 
     const salas =
@@ -761,8 +753,6 @@ async function recuperarSalasPrivadasPersistidas() {
         of salas
     ) {
 
-        // Só queremos recuperação automática
-        // de sala privada.
         if (
             Number(
                 salaBanco.privada
@@ -795,8 +785,6 @@ async function recuperarSalasPrivadasPersistidas() {
     );
 }
 
-// Se a sala não estiver na memória,
-// tenta buscar no SQLite.
 async function buscarOuRecuperarSala(
     roomCode
 ) {
@@ -825,8 +813,6 @@ async function buscarOuRecuperarSala(
         return null;
     }
 
-    // Não tentamos restaurar jogo em andamento
-    // sem o estado do tabuleiro.
     if (
         salaBanco.status_sala !==
         "AGUARDANDO"
@@ -862,7 +848,6 @@ app.post(
         try {
 
             let roomCode;
-
             let codigoJaExiste;
 
             do {
@@ -886,20 +871,18 @@ app.post(
                 req.session.usuario;
 
             // ==========================================
-            // SALVA NO SQLITE
+            // TÓPICO PROFESSOR: PERSISTÊNCIA SQLITE
             // ==========================================
 
             const idSala =
                 await criarSalaBanco(
                     roomCode,
-
                     usuario.idJogador,
-
                     true
                 );
 
             // ==========================================
-            // COLOCA NA MEMÓRIA
+            // TÓPICO PROFESSOR: ESTADO EM MEMÓRIA
             // ==========================================
 
             const sala =
@@ -1219,7 +1202,7 @@ function enviarParaSala(
 }
 
 // ======================================================
-// SALAS PÚBLICAS NO WEBSOCKET
+// SALAS PÚBLICAS
 // ======================================================
 
 function obterSalasPublicas() {
@@ -1577,12 +1560,29 @@ function verificarEmpate(
 // WEBSOCKET
 // ======================================================
 
+// TÓPICO PROFESSOR: TRATAMENTO DE REDE
+// connection -> message -> error/close + heartbeat.
 wss.on(
     "connection",
+
     (ws) => {
 
         console.log(
             "Novo jogador conectado via WebSocket!"
+        );
+
+        // TÓPICO PROFESSOR: HEARTBEAT DE REDE
+        ws.isAlive =
+            true;
+
+        ws.on(
+            "pong",
+
+            () => {
+
+                ws.isAlive =
+                    true;
+            }
         );
 
         ws.roomCode =
@@ -1619,6 +1619,7 @@ wss.on(
 
                 try {
 
+                    // TÓPICO PROFESSOR: PARSE EM MEMÓRIA
                     const mensagem =
                         JSON.parse(
                             data.toString()
@@ -1711,8 +1712,23 @@ wss.on(
             }
         );
 
+        // TÓPICO PROFESSOR: ERRO DE REDE
+        ws.on(
+            "error",
+
+            (erro) => {
+
+                console.error(
+                    "Erro na conexão WebSocket:",
+                    erro.message
+                );
+            }
+        );
+
+        // TÓPICO PROFESSOR: DESCONEXÃO DE REDE
         ws.on(
             "close",
+
             () => {
 
                 tratarDesconexao(
@@ -1728,6 +1744,61 @@ wss.on(
                         }
                     );
             }
+        );
+    }
+);
+
+// ======================================================
+// TÓPICO PROFESSOR: HEARTBEAT / TRATAMENTO DE REDE
+// ======================================================
+
+// Verifica se cada cliente ainda responde.
+const heartbeatInterval =
+    setInterval(
+        () => {
+
+            for (
+                const cliente
+                of wss.clients
+            ) {
+
+                if (
+                    cliente.isAlive ===
+                    false
+                ) {
+
+                    console.log(
+                        "Cliente WebSocket sem resposta. Encerrando conexão."
+                    );
+
+                    cliente.terminate();
+
+                    continue;
+                }
+
+                cliente.isAlive =
+                    false;
+
+                if (
+                    cliente.readyState ===
+                    WebSocket.OPEN
+                ) {
+
+                    cliente.ping();
+                }
+            }
+        },
+
+        HEARTBEAT_INTERVAL_MS
+    );
+
+server.on(
+    "close",
+
+    () => {
+
+        clearInterval(
+            heartbeatInterval
         );
     }
 );
@@ -1771,12 +1842,7 @@ async function entrarNaSala(
     try {
 
         let sala;
-
         let jogadorBanco;
-
-        // ==================================================
-        // CRIAR PELO WEBSOCKET
-        // ==================================================
 
         if (
             !roomCode
@@ -1844,13 +1910,8 @@ async function entrarNaSala(
                 `com ID ${idSala}. ` +
                 `Privada: ${privada}`
             );
-        }
 
-        // ==================================================
-        // ENTRAR EM SALA EXISTENTE
-        // ==================================================
-
-        else {
+        } else {
 
             roomCode =
                 String(
@@ -1859,8 +1920,6 @@ async function entrarNaSala(
                     .trim()
                     .toUpperCase();
 
-            // Procura na memória.
-            // Se não existir, procura no SQLite.
             sala =
                 await buscarOuRecuperarSala(
                     roomCode
@@ -1911,8 +1970,6 @@ async function entrarNaSala(
                 return;
             }
 
-            // Sala HTTP persistida:
-            // o host precisa entrar primeiro.
             if (
                 sala.players.length ===
                     0 &&
@@ -1962,10 +2019,6 @@ async function entrarNaSala(
                 );
         }
 
-        // ==================================================
-        // JOGADOR
-        // ==================================================
-
         const simbolo =
             sala.players.length ===
                 0
@@ -2008,7 +2061,6 @@ async function entrarNaSala(
                 playerName;
         }
 
-        // Segundo jogador
         if (
             sala.players.length ===
             1
@@ -2061,10 +2113,6 @@ async function entrarNaSala(
         );
 
         broadcastListaSalasPublicas();
-
-        // ==================================================
-        // INICIA PARTIDA
-        // ==================================================
 
         if (
             sala.players.length ===
@@ -2202,7 +2250,6 @@ async function executarJogada(
 
     if (
         !sala ||
-
         sala.status !==
             "PLAYING"
     ) {
@@ -2364,10 +2411,6 @@ async function executarJogada(
             sala.board
         );
 
-    // ==================================================
-    // VITÓRIA
-    // ==================================================
-
     if (
         vencedor
     ) {
@@ -2385,7 +2428,6 @@ async function executarJogada(
         const jogadorVencedor =
             sala.players.find(
                 (player) =>
-
                     player.symbol ===
                     vencedor
             );
@@ -2393,7 +2435,6 @@ async function executarJogada(
         const jogadorPerdedor =
             sala.players.find(
                 (player) =>
-
                     player !==
                     jogadorVencedor
             );
@@ -2402,8 +2443,7 @@ async function executarJogada(
             jogadorVencedor
         ) {
 
-            jogadorVencedor
-                .score++;
+            jogadorVencedor.score++;
         }
 
         const {
@@ -2513,10 +2553,6 @@ async function executarJogada(
         return;
     }
 
-    // ==================================================
-    // EMPATE
-    // ==================================================
-
     if (
         verificarEmpate(
             sala.board
@@ -2624,10 +2660,6 @@ async function executarJogada(
         return;
     }
 
-    // ==================================================
-    // TROCA DE TURNO
-    // ==================================================
-
     sala.currentTurn =
         simboloJogador ===
             "X"
@@ -2638,7 +2670,6 @@ async function executarJogada(
 
         await atualizarTurnoPartida(
             sala.idPartida,
-
             sala.currentTurn
         );
 
@@ -2754,9 +2785,7 @@ async function enviarMensagemChat(
 
         await registrarMensagemChat(
             sala.idSala,
-
             ws.playerId,
-
             texto
         );
 
@@ -2903,8 +2932,8 @@ async function solicitarRevanche(
     );
 
     if (
-        sala.rematchRequests
-            .size === 1
+        sala.rematchRequests.size ===
+        1
     ) {
 
         enviarParaSala(
@@ -2925,8 +2954,8 @@ async function solicitarRevanche(
     }
 
     if (
-        sala.rematchRequests
-            .size === 2
+        sala.rematchRequests.size ===
+        2
     ) {
 
         await iniciarNovaPartida(
@@ -2975,8 +3004,7 @@ async function iniciarNovaPartida(
     sala.status =
         "PLAYING";
 
-    sala.rematchRequests
-        .clear();
+    sala.rematchRequests.clear();
 
     try {
 
@@ -3108,14 +3136,12 @@ async function tratarDesconexao(
     const jogador =
         sala.players.find(
             (player) =>
-
                 player.socket ===
                 ws
         );
 
     if (
         !jogador ||
-
         !jogador.connected
     ) {
 
@@ -3133,23 +3159,10 @@ async function tratarDesconexao(
         `da sala ${roomCode}`
     );
 
-    // ==================================================
-    // SALA AGUARDANDO
-    // ==================================================
-
     if (
         sala.status ===
         "WAITING"
     ) {
-
-        // ==============================================
-        // PRIVADA
-        // ==============================================
-        //
-        // NÃO APAGA.
-        //
-        // Assim ela continua persistida no SQLite.
-        //
 
         if (
             sala.private
@@ -3162,13 +3175,6 @@ async function tratarDesconexao(
 
             return;
         }
-
-        // ==============================================
-        // PÚBLICA
-        // ==============================================
-        //
-        // Mantém comportamento antigo.
-        //
 
         rooms.delete(
             roomCode
@@ -3259,6 +3265,8 @@ async function tratarDesconexao(
 // RECONEXÃO
 // ======================================================
 
+// TÓPICO PROFESSOR: RECONEXÃO AUTOMÁTICA - BACKEND
+// Reassocia o socket e restaura o estado.
 function reconectarJogador(
     ws,
     sala,
@@ -3382,13 +3390,11 @@ async function finalizarPorWO(
     jogadorDesconectado
 ) {
 
-    jogadorDesconectado
-        .disconnectTimer =
+    jogadorDesconectado.disconnectTimer =
         null;
 
     if (
-        jogadorDesconectado
-            .connected
+        jogadorDesconectado.connected
     ) {
 
         return;
@@ -3422,8 +3428,7 @@ async function finalizarPorWO(
     sala.currentTurn =
         null;
 
-    sala.rematchRequests
-        .clear();
+    sala.rematchRequests.clear();
 
     if (
         !vencedor
@@ -3537,13 +3542,12 @@ async function finalizarPorWO(
 // INICIALIZAÇÃO
 // ======================================================
 
+// TÓPICO PROFESSOR: INICIALIZAÇÃO DA PERSISTÊNCIA
 inicializarBanco()
 
     .then(
         async () => {
 
-            // Recupera salas privadas salvas
-            // anteriormente no SQLite.
             await recuperarSalasPrivadasPersistidas();
 
             server.listen(
@@ -3565,6 +3569,10 @@ inicializarBanco()
 
                     console.log(
                         "GET/POST de salas disponíveis."
+                    );
+
+                    console.log(
+                        "Heartbeat WebSocket ativo."
                     );
                 }
             );
